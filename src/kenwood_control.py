@@ -14,6 +14,8 @@ SERVER_IP_ADDRESS = ""
 trx_data = ""
 grey_button_style = "background-color : gray window"
 red_button_style = "background-color : red; border-color: black; border: none"
+is_power_on = False
+count = 0
 
 
 serial = QSerialPort()
@@ -26,6 +28,7 @@ for port in ports:
 ui.comL.addItems(portList)
 
 
+
 def show_warning_messagebox():
     msg = QMessageBox()
     msg.setIcon(QMessageBox.Warning)
@@ -36,18 +39,21 @@ def show_warning_messagebox():
 
 
 def send_all_commands():
+    global count
+    count+=1
     if serial.isOpen():
-        serial.write("IF;".encode())
-        time.sleep(0.05)
-        serial.write("PC;".encode())
-        time.sleep(0.05)
-        serial.write("AN;".encode())
-        time.sleep(0.05)
-        serial.write("RA;".encode())
-        time.sleep(0.05)
-        serial.write("PS;".encode())
-        time.sleep(0.05)
-        timer.singleShot(1000, send_all_commands)
+        if count == 1:
+            serial.write("IF;".encode())
+        if count == 2:
+            serial.write("PC;".encode())
+        if count == 3:
+            serial.write("AN;".encode())
+        if count == 4:
+            serial.write("RA;".encode())
+        if count == 5:
+            serial.write("PS;".encode())
+            count = 0
+        timer.singleShot(200, send_all_commands)
         
 
 
@@ -63,22 +69,33 @@ def parse_trx_data():
         if trx_data[3]=="0":
             ui.rxantB.setStyleSheet(grey_button_style)
     if trx_data[0:2]=="RA":
-        pass
+        if trx_data[3]=="1":
+            ui.attB.setStyleSheet(red_button_style)
+        if trx_data[3]=="0":
+            ui.attB.setStyleSheet(grey_button_style)
     if trx_data[0:2]=="PS":
-        pass
+        if trx_data[2]=="1":
+            ui.powerB.setStyleSheet(red_button_style)
+            is_power_on = True
+        if trx_data[2]=="0":
+            ui.powerB.setStyleSheet(grey_button_style)
+            is_power_on = False
 
     
 
 def on_read():
     global trx_data
-    rx = serial.read(30)
+    rx = serial.read(100)
     rxs = str(rx, 'utf-8')
-    if not rxs.find(';'):
+    trx_data=trx_data+rxs
+    #print(rxs)
+    if rxs.find(';')!=-1:
         print(trx_data)
         parse_trx_data()
         trx_data=""
-    else:
-        trx_data=trx_data+rxs
+    #else:
+        #trx_data=trx_data+rxs
+        #print(trx_data)
     
 
 
@@ -88,10 +105,12 @@ def on_open():
         ui.labelCOM.setText("COM port closed")
         serial.close()
     else:
+        serial.setFlowControl(True)
         serial.setPortName(ui.comL.currentText())
         serial.open(QIODevice.ReadWrite)
         ui.labelCOM.setText("COM port opened")
         ui.openB.setText("CLOSE")
+        serial.write("IF;".encode())
         send_all_commands()
         timer.singleShot(1000, send_all_commands)
 
@@ -103,11 +122,37 @@ def on_rxant():
         show_warning_messagebox()
 
 
+def on_att():
+    if serial.isOpen():
+        serial.write("RA01;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_power():
+    if serial.isOpen():
+        if is_power_on:
+            serial.write("PS0;".encode())
+        else:
+            serial.write("PS1;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_if():
+    if serial.isOpen():
+        serial.write("IF;".encode())
+    else:
+        show_warning_messagebox()
+
 
 
 serial.readyRead.connect(on_read)
 ui.openB.clicked.connect(on_open)
 ui.rxantB.clicked.connect(on_rxant)
+ui.attB.clicked.connect(on_att)
+ui.powerB.clicked.connect(on_power)
+ui.powerB_3.clicked.connect(on_if)
 
 
 ui.show()
