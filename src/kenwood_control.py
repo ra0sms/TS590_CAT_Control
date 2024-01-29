@@ -16,6 +16,7 @@ grey_button_style = "background-color : gray window"
 red_button_style = "background-color : red; border-color: black; border: none"
 is_power_on = False
 is_rx_on = False
+is_att_on = False
 count = 0
 
 
@@ -59,7 +60,7 @@ def send_all_commands():
 
 
 def parse_trx_data():
-    global is_rx_on, is_power_on
+    global is_rx_on, is_power_on, is_att_on
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
     if trx_data[0:2]=="PC":
@@ -74,8 +75,10 @@ def parse_trx_data():
             ui.rxantB.setStyleSheet(grey_button_style)
     if trx_data[0:2]=="RA":
         if trx_data[3]=="1":
+            is_att_on = True
             ui.attB.setStyleSheet(red_button_style)
         if trx_data[3]=="0":
+            is_att_on = False
             ui.attB.setStyleSheet(grey_button_style)
     if trx_data[0:2]=="PS":
         if trx_data[2]=="1":
@@ -97,10 +100,7 @@ def on_read():
         print(trx_data)
         parse_trx_data()
         trx_data=""
-    #else:
-        #trx_data=trx_data+rxs
-        #print(trx_data)
-    
+   
 
 
 def on_open():
@@ -109,7 +109,7 @@ def on_open():
         ui.labelCOM.setText("COM port closed")
         serial.close()
     else:
-        serial.setFlowControl(True)
+        serial.setFlowControl(True)     # comment it if you use RS232 port
         serial.setPortName(ui.comL.currentText())
         serial.open(QIODevice.ReadWrite)
         ui.labelCOM.setText("COM port opened")
@@ -133,8 +133,12 @@ def on_rxant():
 
 
 def on_att():
+    global is_att_on
     if serial.isOpen():
-        serial.write("RA01;".encode())
+        if is_att_on:
+            serial.write("RA00;".encode())
+        else:
+            serial.write("RA01;".encode())
     else:
         show_warning_messagebox()
 
