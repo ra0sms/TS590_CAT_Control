@@ -6,15 +6,16 @@ from PyQt5.QtWidgets import QMessageBox, QWidget
 
 
 app = QtWidgets.QApplication([])
-ui = uic.loadUi("form_design.ui")
+ui = uic.loadUi("src/form_design.ui")
 ui.setWindowTitle("Kenwood remote control")
-ui.setWindowIcon(QtGui.QIcon("logo.png"))
+ui.setWindowIcon(QtGui.QIcon("src/logo.png"))
 
 SERVER_IP_ADDRESS = ""
 trx_data = ""
 grey_button_style = "background-color : gray window"
 red_button_style = "background-color : red; border-color: black; border: none"
 is_power_on = False
+is_rx_on = False
 count = 0
 
 
@@ -53,11 +54,12 @@ def send_all_commands():
         if count == 5:
             serial.write("PS;".encode())
             count = 0
-        timer.singleShot(200, send_all_commands)
+        timer.singleShot(1000, send_all_commands)
         
 
 
 def parse_trx_data():
+    global is_rx_on, is_power_on
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
     if trx_data[0:2]=="PC":
@@ -66,7 +68,9 @@ def parse_trx_data():
     if trx_data[0:2]=="AN":
         if trx_data[3]=="1":
             ui.rxantB.setStyleSheet(red_button_style)
+            is_rx_on = True
         if trx_data[3]=="0":
+            is_rx_on = False
             ui.rxantB.setStyleSheet(grey_button_style)
     if trx_data[0:2]=="RA":
         if trx_data[3]=="1":
@@ -112,12 +116,18 @@ def on_open():
         ui.openB.setText("CLOSE")
         serial.write("IF;".encode())
         send_all_commands()
-        timer.singleShot(1000, send_all_commands)
+        timer.singleShot(200, send_all_commands)
 
 
 def on_rxant():
+    global is_rx_on
     if serial.isOpen():
-        serial.write("AN919;".encode())
+        if is_rx_on:
+            print("rx off")
+            serial.write("AN909;".encode())
+        else:
+            print("rx on")
+            serial.write("AN919;".encode())
     else:
         show_warning_messagebox()
 
@@ -130,6 +140,7 @@ def on_att():
 
 
 def on_power():
+    global is_power_on
     if serial.isOpen():
         if is_power_on:
             serial.write("PS0;".encode())
