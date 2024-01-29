@@ -6,9 +6,9 @@ from PyQt5.QtWidgets import QMessageBox, QWidget
 
 
 app = QtWidgets.QApplication([])
-ui = uic.loadUi("form_design.ui")
+ui = uic.loadUi("src/form_design.ui")
 ui.setWindowTitle("Kenwood remote control")
-ui.setWindowIcon(QtGui.QIcon("logo.png"))
+ui.setWindowIcon(QtGui.QIcon("src/logo.png"))
 
 SERVER_IP_ADDRESS = ""
 trx_data = ""
