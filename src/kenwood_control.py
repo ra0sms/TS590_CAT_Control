@@ -28,6 +28,7 @@ ports = QSerialPortInfo().availablePorts()
 for port in ports:
     portList.append(port.portName())
 ui.comL.addItems(portList)
+serial.setFlowControl(True)     # comment it if you use RS232 port
 
 
 def grey_all_power_buttons():
@@ -70,7 +71,7 @@ def send_all_commands():
         if count == 5:
             serial.write("PS;".encode())
             count = 0
-        timer.singleShot(1000, send_all_commands)
+        timer.singleShot(200, send_all_commands)
         
 
 def parse_power(power_data:str):
@@ -162,23 +163,23 @@ def on_read():
 
 
 def on_open():
+    global count
     if serial.isOpen():
         ui.openB.setText("OPEN")
         ui.labelCOM.setText("Port closed")
         serial.close()
+        count = 0 
         grey_all_power_buttons()
         ui.powerB.setStyleSheet(grey_button_style)
         ui.rxantB.setStyleSheet(grey_button_style)
         ui.attB.setStyleSheet(grey_button_style)
         ui.onlineL.setStyleSheet(grey_button_style)
     else:
-        serial.setFlowControl(True)     # comment it if you use RS232 port
         serial.setPortName(ui.comL.currentText())
         serial.open(QIODevice.ReadWrite)
         ui.labelCOM.setText("Port opened")
         ui.openB.setText("CLOSE")
         send_all_commands()
-        timer.singleShot(200, send_all_commands)
 
 
 def on_rxant():
