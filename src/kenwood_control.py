@@ -30,6 +30,21 @@ for port in ports:
 ui.comL.addItems(portList)
 
 
+def grey_all_power_buttons():
+    ui.powerB_15.setStyleSheet(grey_button_style)
+    ui.powerB_14.setStyleSheet(grey_button_style)
+    ui.powerB_13.setStyleSheet(grey_button_style)
+    ui.powerB_12.setStyleSheet(grey_button_style)
+    ui.powerB_11.setStyleSheet(grey_button_style)
+    ui.powerB_10.setStyleSheet(grey_button_style)
+    ui.powerB_9.setStyleSheet(grey_button_style)
+    ui.powerB_8.setStyleSheet(grey_button_style)
+    ui.powerB_7.setStyleSheet(grey_button_style)
+    ui.powerB_6.setStyleSheet(grey_button_style)
+    ui.powerB_5.setStyleSheet(grey_button_style)
+    ui.powerB_4.setStyleSheet(grey_button_style)
+    ui.powerB_3.setStyleSheet(grey_button_style)
+
 
 def show_warning_messagebox():
     msg = QMessageBox()
@@ -58,14 +73,54 @@ def send_all_commands():
         timer.singleShot(1000, send_all_commands)
         
 
+def parse_power(power_data:str):
+    if power_data[2:5]=="100":
+        grey_all_power_buttons()
+        ui.powerB_15.setStyleSheet(red_button_style)
+    if power_data[2:5]=="065":
+        grey_all_power_buttons()
+        ui.powerB_14.setStyleSheet(red_button_style)
+    if power_data[2:5]=="060":
+        grey_all_power_buttons()
+        ui.powerB_13.setStyleSheet(red_button_style)
+    if power_data[2:5]=="055":
+        grey_all_power_buttons()
+        ui.powerB_12.setStyleSheet(red_button_style)
+    if power_data[2:5]=="050":
+        grey_all_power_buttons()
+        ui.powerB_11.setStyleSheet(red_button_style)
+    if power_data[2:5]=="045":
+        grey_all_power_buttons()
+        ui.powerB_10.setStyleSheet(red_button_style)
+    if power_data[2:5]=="040":
+        grey_all_power_buttons()
+        ui.powerB_9.setStyleSheet(red_button_style)
+    if power_data[2:5]=="035":
+        grey_all_power_buttons()
+        ui.powerB_8.setStyleSheet(red_button_style)
+    if power_data[2:5]=="030":
+        grey_all_power_buttons()
+        ui.powerB_7.setStyleSheet(red_button_style)
+    if power_data[2:5]=="025":
+        grey_all_power_buttons()
+        ui.powerB_6.setStyleSheet(red_button_style)
+    if power_data[2:5]=="020":
+        grey_all_power_buttons()
+        ui.powerB_5.setStyleSheet(red_button_style)
+    if power_data[2:5]=="015":
+        grey_all_power_buttons()
+        ui.powerB_4.setStyleSheet(red_button_style)
+    if power_data[2:5]=="010":
+        grey_all_power_buttons()
+        ui.powerB_3.setStyleSheet(red_button_style)
+
 
 def parse_trx_data():
     global is_rx_on, is_power_on, is_att_on
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
     if trx_data[0:2]=="PC":
-        if trx_data[2:5]=="100":
-            ui.powerB_15.setStyleSheet(red_button_style)
+        parse_power(trx_data)
     if trx_data[0:2]=="AN":
         if trx_data[3]=="1":
             ui.rxantB.setStyleSheet(red_button_style)
@@ -154,12 +209,95 @@ def on_power():
         show_warning_messagebox()
 
 
-def on_if():
+def on_10w():
     if serial.isOpen():
-        serial.write("IF;".encode())
+        serial.write("PC010;".encode())
     else:
         show_warning_messagebox()
 
+
+def on_15w():
+    if serial.isOpen():
+        serial.write("PC015;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_20w():
+    if serial.isOpen():
+        serial.write("PC020;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_25w():
+    if serial.isOpen():
+        serial.write("PC025;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_30w():
+    if serial.isOpen():
+        serial.write("PC030;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_35w():
+    if serial.isOpen():
+        serial.write("PC035;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_40w():
+    if serial.isOpen():
+        serial.write("PC040;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_45w():
+    if serial.isOpen():
+        serial.write("PC045;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_50w():
+    if serial.isOpen():
+        serial.write("PC050;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_55w():
+    if serial.isOpen():
+        serial.write("PC055;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_60w():
+    if serial.isOpen():
+        serial.write("PC060;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_65w():
+    if serial.isOpen():
+        serial.write("PC065;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def on_100w():
+    if serial.isOpen():
+        serial.write("PC100;".encode())
+    else:
+        show_warning_messagebox()
 
 
 serial.readyRead.connect(on_read)
@@ -167,7 +305,20 @@ ui.openB.clicked.connect(on_open)
 ui.rxantB.clicked.connect(on_rxant)
 ui.attB.clicked.connect(on_att)
 ui.powerB.clicked.connect(on_power)
-ui.powerB_3.clicked.connect(on_if)
+ui.powerB_3.clicked.connect(on_10w)
+ui.powerB_4.clicked.connect(on_15w)
+ui.powerB_5.clicked.connect(on_20w)
+ui.powerB_6.clicked.connect(on_25w)
+ui.powerB_7.clicked.connect(on_30w)
+ui.powerB_8.clicked.connect(on_35w)
+ui.powerB_9.clicked.connect(on_40w)
+ui.powerB_10.clicked.connect(on_45w)
+ui.powerB_11.clicked.connect(on_50w)
+ui.powerB_12.clicked.connect(on_55w)
+ui.powerB_13.clicked.connect(on_60w)
+ui.powerB_14.clicked.connect(on_65w)
+ui.powerB_15.clicked.connect(on_100w)
+
 
 
 ui.show()
