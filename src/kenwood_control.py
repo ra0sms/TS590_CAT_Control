@@ -155,21 +155,28 @@ def on_read():
         print(trx_data)
         parse_trx_data()
         trx_data=""
+        ui.onlineL.setStyleSheet(red_button_style)
+    else:
+        ui.onlineL.setStyleSheet(grey_button_style)
    
 
 
 def on_open():
     if serial.isOpen():
         ui.openB.setText("OPEN")
-        ui.labelCOM.setText("COM port closed")
+        ui.labelCOM.setText("Port closed")
         serial.close()
+        grey_all_power_buttons()
+        ui.powerB.setStyleSheet(grey_button_style)
+        ui.rxantB.setStyleSheet(grey_button_style)
+        ui.attB.setStyleSheet(grey_button_style)
+        ui.onlineL.setStyleSheet(grey_button_style)
     else:
         serial.setFlowControl(True)     # comment it if you use RS232 port
         serial.setPortName(ui.comL.currentText())
         serial.open(QIODevice.ReadWrite)
-        ui.labelCOM.setText("COM port opened")
+        ui.labelCOM.setText("Port opened")
         ui.openB.setText("CLOSE")
-        serial.write("IF;".encode())
         send_all_commands()
         timer.singleShot(200, send_all_commands)
 
