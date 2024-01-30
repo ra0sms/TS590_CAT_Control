@@ -1,8 +1,7 @@
-import PyQt5.QtWidgets, time, sched
 from PyQt5 import QtWidgets, uic, QtGui
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
-from PyQt5.QtCore import QIODevice, QTimer, QEvent
-from PyQt5.QtWidgets import QMessageBox, QWidget
+from PyQt5.QtCore import QIODevice, QTimer
+from PyQt5.QtWidgets import QMessageBox
 
 
 app = QtWidgets.QApplication([])
@@ -176,10 +175,12 @@ def on_open():
         ui.onlineL.setStyleSheet(grey_button_style)
     else:
         serial.setPortName(ui.comL.currentText())
-        serial.open(QIODevice.ReadWrite)
-        ui.labelCOM.setText("Port opened")
-        ui.openB.setText("CLOSE")
-        send_all_commands()
+        if serial.open(QIODevice.ReadWrite):
+            ui.labelCOM.setText("Port opened")
+            ui.openB.setText("CLOSE")
+            send_all_commands()
+        else:
+            show_warning_messagebox()
 
 
 def on_rxant():
