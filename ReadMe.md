@@ -1,4 +1,5 @@
 # Kenwood transceiver remote control software
+More information - https://ra0sms.com/kenwood-control-software/
 
 ![](docs/screen1.png)
 
