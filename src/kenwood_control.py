@@ -151,7 +151,7 @@ def parse_trx_data():
             is_power_on = False
     if trx_data[0:2]=="FR":
         if trx_data[2]=="0":
-            is_active_vfob = True
+            is_active_vfoa = True
         if trx_data[2]=="1":
             is_active_vfob = True
 
@@ -339,7 +339,20 @@ def up_1khz():
 
 
 def down_1khz():
-    pass
+    global current_freq, is_active_vfob, is_active_vfoa
+    a = int(current_freq[4])
+    a = a - 1
+    if serial.isOpen():
+        if is_active_vfoa:
+            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
+            print(message)
+            serial.write(message.encode())  
+        if is_active_vfob:
+            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
+            print(message)
+            serial.write(message.encode())
+    else:
+        show_warning_messagebox()
 
 
 serial.readyRead.connect(on_read)
@@ -361,7 +374,7 @@ ui.powerB_13.clicked.connect(on_60w)
 ui.powerB_14.clicked.connect(on_65w)
 ui.powerB_15.clicked.connect(on_100w)
 ui.up1B.clicked.connect(up_1khz)
-ui.up1B.clicked.connect(down_1khz)
+ui.down1B.clicked.connect(down_1khz)
 
 
 
