@@ -16,6 +16,8 @@ red_button_style = "background-color : red; border-color: black; border: none"
 is_power_on = False
 is_rx_on = False
 is_att_on = False
+is_active_vfoa = False
+is_active_vfob = False
 count = 0
 current_freq = ""
 
@@ -70,6 +72,8 @@ def send_all_commands():
             serial.write("RA;".encode())
         if count == 5:
             serial.write("PS;".encode())
+        if count == 6:
+            serial.write("FR;".encode())
             count = 0
         timer.singleShot(200, send_all_commands)
         
@@ -118,6 +122,7 @@ def parse_power(power_data:str):
 
 def parse_trx_data():
     global is_rx_on, is_power_on, is_att_on, current_freq
+    global is_active_vfoa, is_active_vfob
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
         current_freq = trx_data[5:16]
@@ -144,6 +149,11 @@ def parse_trx_data():
         if trx_data[2]=="0":
             ui.powerB.setStyleSheet(grey_button_style)
             is_power_on = False
+    if trx_data[0:2]=="FR":
+        if trx_data[2]=="0":
+            is_active_vfob = True
+        if trx_data[2]=="1":
+            is_active_vfob = True
 
     
 
@@ -312,13 +322,18 @@ def on_100w():
 
 
 def up_1khz():
-    global current_freq
+    global current_freq, is_active_vfob, is_active_vfoa
     a = int(current_freq[4])
     a = a + 1
     if serial.isOpen():
-        message = "IF000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
-        print(message)
-        serial.write(message.encode())  
+        if is_active_vfoa:
+            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
+            print(message)
+            serial.write(message.encode())  
+        if is_active_vfob:
+            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
+            print(message)
+            serial.write(message.encode())
     else:
         show_warning_messagebox()
 
