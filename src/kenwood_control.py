@@ -58,6 +58,15 @@ def show_warning_messagebox():
     retval = msg.exec_()
 
 
+def show_warning_messagebox_no_data():
+    msg = QMessageBox()
+    msg.setIcon(QMessageBox.Warning)
+    msg.setText("No data from TRX!")
+    msg.setWindowTitle("Warning")
+    msg.setStandardButtons(QMessageBox.Ok)
+    retval = msg.exec_()   
+
+
 def send_all_commands():
     global count
     count+=1
@@ -323,8 +332,11 @@ def on_100w():
 
 def up_1khz():
     global current_freq, is_active_vfob, is_active_vfoa
-    a = int(current_freq[4])
-    a = a + 1
+    try:
+        a = int(current_freq[4])
+        a = a + 1
+    except:
+        show_warning_messagebox_no_data()
     if serial.isOpen():
         if is_active_vfoa:
             message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
@@ -340,8 +352,11 @@ def up_1khz():
 
 def down_1khz():
     global current_freq, is_active_vfob, is_active_vfoa
-    a = int(current_freq[4])
-    a = a - 1
+    try:
+        a = int(current_freq[4])
+        a = a - 1
+    except:
+        show_warning_messagebox_no_data()
     if serial.isOpen():
         if is_active_vfoa:
             message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
