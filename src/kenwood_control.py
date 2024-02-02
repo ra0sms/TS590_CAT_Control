@@ -1,3 +1,9 @@
+# Kenwood radio control software
+# ver 1.0.1 - Added Buttons 1 kHz Up and Down
+# ver 1.0.0 - Basic functions
+#
+#
+
 from PyQt5 import QtWidgets, uic, QtGui
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
 from PyQt5.QtCore import QIODevice, QTimer
