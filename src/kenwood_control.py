@@ -17,6 +17,7 @@ is_power_on = False
 is_rx_on = False
 is_att_on = False
 count = 0
+current_freq = ""
 
 
 serial = QSerialPort()
@@ -116,9 +117,10 @@ def parse_power(power_data:str):
 
 
 def parse_trx_data():
-    global is_rx_on, is_power_on, is_att_on
+    global is_rx_on, is_power_on, is_att_on, current_freq
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
+        current_freq = trx_data[5:16]
     if trx_data[0:2]=="PC":
         parse_power(trx_data)
     if trx_data[0:2]=="AN":
@@ -309,6 +311,22 @@ def on_100w():
         show_warning_messagebox()
 
 
+def up_1khz():
+    global current_freq
+    a = int(current_freq[4])
+    a = a + 1
+    if serial.isOpen():
+        message = "IF000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
+        print(message)
+        serial.write(message.encode())  
+    else:
+        show_warning_messagebox()
+
+
+def down_1khz():
+    pass
+
+
 serial.readyRead.connect(on_read)
 ui.openB.clicked.connect(on_open)
 ui.rxantB.clicked.connect(on_rxant)
@@ -327,6 +345,8 @@ ui.powerB_12.clicked.connect(on_55w)
 ui.powerB_13.clicked.connect(on_60w)
 ui.powerB_14.clicked.connect(on_65w)
 ui.powerB_15.clicked.connect(on_100w)
+ui.up1B.clicked.connect(up_1khz)
+ui.up1B.clicked.connect(down_1khz)
 
 
 
