@@ -327,11 +327,11 @@ def up_1khz():
     a = a + 1
     if serial.isOpen():
         if is_active_vfoa:
-            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
+            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
             print(message)
             serial.write(message.encode())  
         if is_active_vfob:
-            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:] + ";"
+            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
             print(message)
             serial.write(message.encode())
     else:
