@@ -1,5 +1,6 @@
 # Kenwood radio control software
-# ver 1.0.1 - Added Buttons 1 kHz Up and Down
+# ver 1.0.2 - Added Buttons 100 Hz up and down
+# ver 1.0.1 - Added Buttons 1 kHz up and down
 # ver 1.0.0 - Basic functions
 #
 #
@@ -376,6 +377,46 @@ def down_1khz():
         show_warning_messagebox()
 
 
+def up_100hz():
+    global current_freq, is_active_vfob, is_active_vfoa
+    try:
+        a = int(current_freq[5])
+        a = a + 1
+    except:
+        show_warning_messagebox_no_data()
+    if serial.isOpen():
+        if is_active_vfoa:
+            message = "FA000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
+            print(message)
+            serial.write(message.encode())  
+        if is_active_vfob:
+            message = "FB000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
+            print(message)
+            serial.write(message.encode())
+    else:
+        show_warning_messagebox()
+
+
+def down_100hz():
+    global current_freq, is_active_vfob, is_active_vfoa
+    try:
+        a = int(current_freq[5])
+        a = a - 1
+    except:
+        show_warning_messagebox_no_data()
+    if serial.isOpen():
+        if is_active_vfoa:
+            message = "FA000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
+            print(message)
+            serial.write(message.encode())  
+        if is_active_vfob:
+            message = "FB000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
+            print(message)
+            serial.write(message.encode())
+    else:
+        show_warning_messagebox()
+
+
 serial.readyRead.connect(on_read)
 ui.openB.clicked.connect(on_open)
 ui.rxantB.clicked.connect(on_rxant)
@@ -396,6 +437,8 @@ ui.powerB_14.clicked.connect(on_65w)
 ui.powerB_15.clicked.connect(on_100w)
 ui.up1B.clicked.connect(up_1khz)
 ui.down1B.clicked.connect(down_1khz)
+ui.up100B.clicked.connect(up_100hz)
+ui.down100B.clicked.connect(down_100hz)
 
 
 
