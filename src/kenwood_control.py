@@ -91,7 +91,7 @@ def send_all_commands():
         if count == 6:
             serial.write("FR;".encode())
             count = 0
-        timer.singleShot(200, send_all_commands)
+        timer.singleShot(100, send_all_commands)
         
 
 def parse_power(power_data:str):
