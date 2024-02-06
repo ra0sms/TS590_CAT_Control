@@ -176,8 +176,10 @@ def parse_trx_data():
             is_active_vfob = True
     if trx_data[0:2]=="AC":
         if trx_data[3]=="0":
+            ui.tuner_onB.setStyleSheet(grey_button_style)
             is_tuner_on = False
         if trx_data[3]=="1":
+            ui.tuner_onB.setStyleSheet(red_button_style)
             is_tuner_on = True
 
     
@@ -437,7 +439,7 @@ def tuner_on():
     global is_tuner_on
     if serial.isOpen():
         if is_tuner_on:
-            serial.write("AC000".encode())
+            serial.write("AC000;".encode())
         else:
             serial.write("AC110;".encode())
     else:
