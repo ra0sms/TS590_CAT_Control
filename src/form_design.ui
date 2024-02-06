@@ -66,7 +66,7 @@
      <rect>
       <x>10</x>
       <y>10</y>
-      <width>261</width>
+      <width>221</width>
       <height>41</height>
      </rect>
     </property>
@@ -86,10 +86,10 @@
    <widget class="QPushButton" name="powerB">
     <property name="geometry">
      <rect>
-      <x>110</x>
-      <y>80</y>
+      <x>240</x>
+      <y>10</y>
       <width>61</width>
-      <height>31</height>
+      <height>41</height>
      </rect>
     </property>
     <property name="font">
@@ -480,6 +480,44 @@
     </property>
     <property name="text">
      <string>-100Hz</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="tuningB">
+    <property name="geometry">
+     <rect>
+      <x>110</x>
+      <y>60</y>
+      <width>61</width>
+      <height>27</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Consolas</family>
+      <pointsize>12</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>Tuning</string>
+    </property>
+   </widget>
+   <widget class="QPushButton" name="tuner_onB">
+    <property name="geometry">
+     <rect>
+      <x>110</x>
+      <y>100</y>
+      <width>61</width>
+      <height>27</height>
+     </rect>
+    </property>
+    <property name="font">
+     <font>
+      <family>Consolas</family>
+      <pointsize>12</pointsize>
+     </font>
+    </property>
+    <property name="text">
+     <string>AT on</string>
     </property>
    </widget>
   </widget>

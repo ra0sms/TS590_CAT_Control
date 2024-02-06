@@ -1,4 +1,5 @@
 # Kenwood radio control software
+# ver 1.0.3 - Added Buttons Tuning and Tuner On
 # ver 1.0.2 - Added Buttons 100 Hz up and down
 # ver 1.0.1 - Added Buttons 1 kHz up and down
 # ver 1.0.0 - Basic functions
@@ -25,6 +26,7 @@ is_rx_on = False
 is_att_on = False
 is_active_vfoa = False
 is_active_vfob = False
+is_tuner_on = False
 count = 0
 current_freq = ""
 
@@ -90,8 +92,10 @@ def send_all_commands():
             serial.write("PS;".encode())
         if count == 6:
             serial.write("FR;".encode())
+        if count == 7:
+            serial.write("AC;".encode())
             count = 0
-        timer.singleShot(100, send_all_commands)
+        timer.singleShot(50, send_all_commands)
         
 
 def parse_power(power_data:str):
@@ -138,7 +142,7 @@ def parse_power(power_data:str):
 
 def parse_trx_data():
     global is_rx_on, is_power_on, is_att_on, current_freq
-    global is_active_vfoa, is_active_vfob
+    global is_active_vfoa, is_active_vfob, is_tuner_on
     if trx_data[0:2]=="IF":
         ui.lcdNumber.display(trx_data[5:16])
         current_freq = trx_data[5:16]
@@ -170,6 +174,11 @@ def parse_trx_data():
             is_active_vfoa = True
         if trx_data[2]=="1":
             is_active_vfob = True
+    if trx_data[0:2]=="AC":
+        if trx_data[3]=="0":
+            is_tuner_on = False
+        if trx_data[3]=="1":
+            is_tuner_on = True
 
     
 
@@ -417,6 +426,24 @@ def down_100hz():
         show_warning_messagebox()
 
 
+def tuning():
+    if serial.isOpen():
+        serial.write("AC111;".encode())
+    else:
+        show_warning_messagebox()
+
+
+def tuner_on():
+    global is_tuner_on
+    if serial.isOpen():
+        if is_tuner_on:
+            serial.write("AC000".encode())
+        else:
+            serial.write("AC110;".encode())
+    else:
+        show_warning_messagebox()
+
+
 serial.readyRead.connect(on_read)
 ui.openB.clicked.connect(on_open)
 ui.rxantB.clicked.connect(on_rxant)
@@ -439,6 +466,8 @@ ui.up1B.clicked.connect(up_1khz)
 ui.down1B.clicked.connect(down_1khz)
 ui.up100B.clicked.connect(up_100hz)
 ui.down100B.clicked.connect(down_100hz)
+ui.tuningB.clicked.connect(tuning)
+ui.tuner_onB.clicked.connect(tuner_on)
 
 
 
