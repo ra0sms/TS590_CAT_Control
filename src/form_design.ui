@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>399</width>
-    <height>258</height>
+    <width>403</width>
+    <height>307</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -38,8 +38,8 @@
      <rect>
       <x>310</x>
       <y>60</y>
-      <width>81</width>
-      <height>71</height>
+      <width>89</width>
+      <height>80</height>
      </rect>
     </property>
     <layout class="QVBoxLayout" name="verticalLayout">
@@ -335,7 +335,7 @@
      <rect>
       <x>310</x>
       <y>150</y>
-      <width>51</width>
+      <width>91</width>
       <height>51</height>
      </rect>
     </property>
@@ -374,7 +374,7 @@
       <x>10</x>
       <y>60</y>
       <width>91</width>
-      <height>71</height>
+      <height>88</height>
      </rect>
     </property>
     <layout class="QVBoxLayout" name="verticalLayout_2">
@@ -520,14 +520,27 @@
      <string>AT on</string>
     </property>
    </widget>
+   <widget class="QPushButton" name="tx_onB">
+    <property name="geometry">
+     <rect>
+      <x>10</x>
+      <y>220</y>
+      <width>291</width>
+      <height>34</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>TX (SPACE)</string>
+    </property>
+   </widget>
   </widget>
   <widget class="QMenuBar" name="menubar">
    <property name="geometry">
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>399</width>
-     <height>21</height>
+     <width>403</width>
+     <height>30</height>
     </rect>
    </property>
   </widget>

@@ -1,477 +1,281 @@
-# Kenwood radio control software
-# ver 1.0.3 - Added Buttons Tuning and Tuner On
-# ver 1.0.2 - Added Buttons 100 Hz up and down
-# ver 1.0.1 - Added Buttons 1 kHz up and down
-# ver 1.0.0 - Basic functions
-#
-#
-
 from PyQt5 import QtWidgets, uic, QtGui
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
-from PyQt5.QtCore import QIODevice, QTimer
+from PyQt5.QtCore import QIODevice, QTimer, Qt
 from PyQt5.QtWidgets import QMessageBox
 
-
-app = QtWidgets.QApplication([])
-ui = uic.loadUi("src/form_design.ui")
-ui.setWindowTitle("Kenwood remote control")
-ui.setWindowIcon(QtGui.QIcon("src/logo.png"))
-
-SERVER_IP_ADDRESS = ""
-trx_data = ""
-grey_button_style = "background-color : gray window"
-red_button_style = "background-color : red; border-color: black; border: none"
-is_power_on = False
-is_rx_on = False
-is_att_on = False
-is_active_vfoa = False
-is_active_vfob = False
-is_tuner_on = False
-count = 0
-current_freq = ""
-
-
-serial = QSerialPort()
-timer = QTimer()
-serial.setBaudRate(9600)
-portList = []
-ports = QSerialPortInfo().availablePorts()
-for port in ports:
-    portList.append(port.portName())
-ui.comL.addItems(portList)
-serial.setFlowControl(True)     # comment it if you use RS232 port
-
-
-def grey_all_power_buttons():
-    ui.powerB_15.setStyleSheet(grey_button_style)
-    ui.powerB_14.setStyleSheet(grey_button_style)
-    ui.powerB_13.setStyleSheet(grey_button_style)
-    ui.powerB_12.setStyleSheet(grey_button_style)
-    ui.powerB_11.setStyleSheet(grey_button_style)
-    ui.powerB_10.setStyleSheet(grey_button_style)
-    ui.powerB_9.setStyleSheet(grey_button_style)
-    ui.powerB_8.setStyleSheet(grey_button_style)
-    ui.powerB_7.setStyleSheet(grey_button_style)
-    ui.powerB_6.setStyleSheet(grey_button_style)
-    ui.powerB_5.setStyleSheet(grey_button_style)
-    ui.powerB_4.setStyleSheet(grey_button_style)
-    ui.powerB_3.setStyleSheet(grey_button_style)
-
-
-def show_warning_messagebox():
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Warning)
-    msg.setText("Com port is closed!")
-    msg.setWindowTitle("Warning")
-    msg.setStandardButtons(QMessageBox.Ok)
-    retval = msg.exec_()
-
-
-def show_warning_messagebox_no_data():
-    msg = QMessageBox()
-    msg.setIcon(QMessageBox.Warning)
-    msg.setText("No data from TRX!")
-    msg.setWindowTitle("Warning")
-    msg.setStandardButtons(QMessageBox.Ok)
-    retval = msg.exec_()   
-
-
-def send_all_commands():
-    global count
-    count+=1
-    if serial.isOpen():
-        if count == 1:
-            serial.write("IF;".encode())
-        if count == 2:
-            serial.write("PC;".encode())
-        if count == 3:
-            serial.write("AN;".encode())
-        if count == 4:
-            serial.write("RA;".encode())
-        if count == 5:
-            serial.write("PS;".encode())
-        if count == 6:
-            serial.write("FR;".encode())
-        if count == 7:
-            serial.write("AC;".encode())
-            count = 0
-        timer.singleShot(50, send_all_commands)
+class KenwoodControl(QtWidgets.QMainWindow):
+    def __init__(self):
+        super().__init__()
+        uic.loadUi("src/form_design.ui", self)
+        self.setWindowTitle("Kenwood remote control")
+        self.setWindowIcon(QtGui.QIcon("logo.png"))
         
+        # Инициализация переменных состояния
+        self.trx_data = ""
+        self.grey_button_style = "background-color: gray window"
+        self.red_button_style = "background-color: red; border-color: black; border: none"
+        self.is_power_on = False
+        self.is_rx_on = False
+        self.is_att_on = False
+        self.is_active_vfoa = False
+        self.is_active_vfob = False
+        self.is_tuner_on = False
+        self.is_tx_on = False
+        self.count = 0
+        self.current_freq = ""
+        self.ptt_active = False
+        
+        # Настройка последовательного порта
+        self.serial = QSerialPort()
+        self.serial.setBaudRate(9600)
+        self.serial.readyRead.connect(self.on_read)
+        self.serial.setFlowControl(True)     # comment it if you use RS232 port
+        
+        self.timer = QTimer()
+        
+        # Заполнение списка COM-портов
+        self.comL.addItems([port.portName() for port in QSerialPortInfo().availablePorts()])
+        
+        # Подключение сигналов кнопок
+        self.connect_buttons()
+        
+        # Инициализация UI
+        self.init_ui_state()
 
-def parse_power(power_data:str):
-    if power_data[2:5]=="100":
-        grey_all_power_buttons()
-        ui.powerB_15.setStyleSheet(red_button_style)
-    if power_data[2:5]=="065":
-        grey_all_power_buttons()
-        ui.powerB_14.setStyleSheet(red_button_style)
-    if power_data[2:5]=="060":
-        grey_all_power_buttons()
-        ui.powerB_13.setStyleSheet(red_button_style)
-    if power_data[2:5]=="055":
-        grey_all_power_buttons()
-        ui.powerB_12.setStyleSheet(red_button_style)
-    if power_data[2:5]=="050":
-        grey_all_power_buttons()
-        ui.powerB_11.setStyleSheet(red_button_style)
-    if power_data[2:5]=="045":
-        grey_all_power_buttons()
-        ui.powerB_10.setStyleSheet(red_button_style)
-    if power_data[2:5]=="040":
-        grey_all_power_buttons()
-        ui.powerB_9.setStyleSheet(red_button_style)
-    if power_data[2:5]=="035":
-        grey_all_power_buttons()
-        ui.powerB_8.setStyleSheet(red_button_style)
-    if power_data[2:5]=="030":
-        grey_all_power_buttons()
-        ui.powerB_7.setStyleSheet(red_button_style)
-    if power_data[2:5]=="025":
-        grey_all_power_buttons()
-        ui.powerB_6.setStyleSheet(red_button_style)
-    if power_data[2:5]=="020":
-        grey_all_power_buttons()
-        ui.powerB_5.setStyleSheet(red_button_style)
-    if power_data[2:5]=="015":
-        grey_all_power_buttons()
-        ui.powerB_4.setStyleSheet(red_button_style)
-    if power_data[2:5]=="010":
-        grey_all_power_buttons()
-        ui.powerB_3.setStyleSheet(red_button_style)
+    def init_ui_state(self):
+        """Инициализация начального состояния UI"""
+        self.grey_all_power_buttons()
+        self.onlineL.setStyleSheet(self.grey_button_style)
+        self.tx_onB.setStyleSheet(self.grey_button_style)
+        self.openB.setText("OPEN")
+        self.labelCOM.setText("Port closed")
 
+    def connect_buttons(self):
+        """Подключение всех обработчиков кнопок"""
+        # Основные кнопки управления
+        self.openB.clicked.connect(self.on_open)
+        self.rxantB.clicked.connect(self.on_rxant)
+        self.attB.clicked.connect(self.on_att)
+        self.powerB.clicked.connect(self.on_power)
+        self.tuningB.clicked.connect(self.tuning)
+        self.tuner_onB.clicked.connect(self.tuner_on)
+        self.tx_onB.clicked.connect(self.on_tx_button)
+        
+        # Кнопки управления мощностью
+        power_settings = {
+            self.powerB_3: "010", self.powerB_4: "015", self.powerB_5: "020",
+            self.powerB_6: "025", self.powerB_7: "030", self.powerB_8: "035",
+            self.powerB_9: "040", self.powerB_10: "045", self.powerB_11: "050",
+            self.powerB_12: "055", self.powerB_13: "060", self.powerB_14: "065",
+            self.powerB_15: "100"
+        }
+        for btn, power in power_settings.items():
+            btn.clicked.connect(lambda _, p=power: self.set_power(p))
+            
+        # Кнопки управления частотой
+        self.up1B.clicked.connect(lambda: self.adjust_frequency(step=1000, direction=1))
+        self.down1B.clicked.connect(lambda: self.adjust_frequency(step=1000, direction=-1))
+        self.up100B.clicked.connect(lambda: self.adjust_frequency(step=100, direction=1))
+        self.down100B.clicked.connect(lambda: self.adjust_frequency(step=100, direction=-1))
 
-def parse_trx_data():
-    global is_rx_on, is_power_on, is_att_on, current_freq
-    global is_active_vfoa, is_active_vfob, is_tuner_on
-    if trx_data[0:2]=="IF":
-        ui.lcdNumber.display(trx_data[5:16])
-        current_freq = trx_data[5:16]
-    if trx_data[0:2]=="PC":
-        parse_power(trx_data)
-    if trx_data[0:2]=="AN":
-        if trx_data[3]=="1":
-            ui.rxantB.setStyleSheet(red_button_style)
-            is_rx_on = True
-        if trx_data[3]=="0":
-            is_rx_on = False
-            ui.rxantB.setStyleSheet(grey_button_style)
-    if trx_data[0:2]=="RA":
-        if trx_data[3]=="1":
-            is_att_on = True
-            ui.attB.setStyleSheet(red_button_style)
-        if trx_data[3]=="0":
-            is_att_on = False
-            ui.attB.setStyleSheet(grey_button_style)
-    if trx_data[0:2]=="PS":
-        if trx_data[2]=="1":
-            ui.powerB.setStyleSheet(red_button_style)
-            is_power_on = True
-        if trx_data[2]=="0":
-            ui.powerB.setStyleSheet(grey_button_style)
-            is_power_on = False
-    if trx_data[0:2]=="FR":
-        if trx_data[2]=="0":
-            is_active_vfoa = True
-        if trx_data[2]=="1":
-            is_active_vfob = True
-    if trx_data[0:2]=="AC":
-        if trx_data[3]=="0":
-            ui.tuner_onB.setStyleSheet(grey_button_style)
-            is_tuner_on = False
-        if trx_data[3]=="1":
-            ui.tuner_onB.setStyleSheet(red_button_style)
-            is_tuner_on = True
+    def grey_all_power_buttons(self):
+        """Сброс стиля всех кнопок мощности"""
+        for btn in [
+            self.powerB_3, self.powerB_4, self.powerB_5, self.powerB_6,
+            self.powerB_7, self.powerB_8, self.powerB_9, self.powerB_10,
+            self.powerB_11, self.powerB_12, self.powerB_13, self.powerB_14,
+            self.powerB_15
+        ]:
+            btn.setStyleSheet(self.grey_button_style)
 
-    
-
-def on_read():
-    global trx_data
-    rx = serial.read(100)
-    rxs = str(rx, 'utf-8')
-    trx_data=trx_data+rxs
-    #print(rxs)
-    if rxs.find(';')!=-1:
-        print(trx_data)
-        parse_trx_data()
-        trx_data=""
-        ui.onlineL.setStyleSheet(red_button_style)
-    else:
-        ui.onlineL.setStyleSheet(grey_button_style)
-   
-
-
-def on_open():
-    global count
-    if serial.isOpen():
-        ui.openB.setText("OPEN")
-        ui.labelCOM.setText("Port closed")
-        serial.close()
-        count = 0 
-        grey_all_power_buttons()
-        ui.powerB.setStyleSheet(grey_button_style)
-        ui.rxantB.setStyleSheet(grey_button_style)
-        ui.attB.setStyleSheet(grey_button_style)
-        ui.onlineL.setStyleSheet(grey_button_style)
-    else:
-        serial.setPortName(ui.comL.currentText())
-        if serial.open(QIODevice.ReadWrite):
-            ui.labelCOM.setText("Port opened")
-            ui.openB.setText("CLOSE")
-            send_all_commands()
+    # Обработчики событий клавиатуры
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Space and not self.ptt_active:
+            self.ptt_active = True
+            self.ptt_on()
+            event.accept()
         else:
-            show_warning_messagebox()
-
-
-def on_rxant():
-    global is_rx_on
-    if serial.isOpen():
-        if is_rx_on:
-            print("rx off")
-            serial.write("AN909;".encode())
+            super().keyPressEvent(event)
+            
+    def keyReleaseEvent(self, event):
+        if event.key() == Qt.Key_Space and self.ptt_active:
+            self.ptt_active = False
+            self.ptt_off()
+            event.accept()
         else:
-            print("rx on")
-            serial.write("AN919;".encode())
-    else:
-        show_warning_messagebox()
+            super().keyReleaseEvent(event)
 
+    # Основные функции управления
+    def send_command(self, command):
+        """Отправка команды на радио"""
+        if self.serial.isOpen():
+            self.serial.write(f"{command};".encode())
+            return True
+        self.show_warning("Com port is closed!")
+        return False
 
-def on_att():
-    global is_att_on
-    if serial.isOpen():
-        if is_att_on:
-            serial.write("RA00;".encode())
+    def show_warning(self, text):
+        """Показать предупреждение"""
+        QMessageBox.warning(self, "Warning", text, QMessageBox.Ok)
+
+    def send_all_commands(self):
+        """Циклическая отправка команд запроса состояния"""
+        if not self.serial.isOpen():
+            return
+            
+        commands = ["IF", "PC", "AN", "RA", "PS", "FR", "AC"]
+        if self.count < len(commands):
+            self.send_command(commands[self.count])
+            self.count += 1
         else:
-            serial.write("RA01;".encode())
-    else:
-        show_warning_messagebox()
+            self.count = 0
+            
+        self.timer.singleShot(50, self.send_all_commands)
 
+    def parse_trx_data(self):
+        """Анализ данных от трансивера"""
+        if not self.trx_data:
+            return
+            
+        cmd = self.trx_data[0:2]
+        
+        if cmd == "IF":
+            self.current_freq = self.trx_data[5:16]
+            self.lcdNumber.display(self.current_freq)
+            
+        elif cmd == "PC":
+            power = self.trx_data[2:5]
+            if power in ["010", "015", "020", "025", "030", "035", 
+                        "040", "045", "050", "055", "060", "065", "100"]:
+                self.grey_all_power_buttons()
+                getattr(self, f"powerB_{int(power)//5 - 1}").setStyleSheet(self.red_button_style)
+                
+        elif cmd == "AN":
+            self.is_rx_on = self.trx_data[3] == "1"
+            self.rxantB.setStyleSheet(self.red_button_style if self.is_rx_on else self.grey_button_style)
+            
+        elif cmd == "RA":
+            self.is_att_on = self.trx_data[3] == "1"
+            self.attB.setStyleSheet(self.red_button_style if self.is_att_on else self.grey_button_style)
+            
+        elif cmd == "PS":
+            self.is_power_on = self.trx_data[2] == "1"
+            self.powerB.setStyleSheet(self.red_button_style if self.is_power_on else self.grey_button_style)
+            
+        elif cmd == "FR":
+            self.is_active_vfoa = self.trx_data[2] == "0"
+            self.is_active_vfob = self.trx_data[2] == "1"
+            
+        elif cmd == "AC":
+            self.is_tuner_on = self.trx_data[3] == "1"
+            self.tuner_onB.setStyleSheet(self.red_button_style if self.is_tuner_on else self.grey_button_style)
+            
+        self.onlineL.setStyleSheet(self.red_button_style if ";" in self.trx_data else self.grey_button_style)
 
-def on_power():
-    global is_power_on
-    if serial.isOpen():
-        if is_power_on:
-            serial.write("PS0;".encode())
+    def on_read(self):
+        """Чтение данных из последовательного порта"""
+        rx = self.serial.read(100)
+        self.trx_data += str(rx, 'utf-8')
+        
+        if ';' in self.trx_data:
+            print(self.trx_data)
+            self.parse_trx_data()
+            self.trx_data = ""
+
+    # Обработчики кнопок
+    def on_open(self):
+        """Открытие/закрытие COM-порта"""
+        if self.serial.isOpen():
+            self.serial.close()
+            self.openB.setText("OPEN")
+            self.labelCOM.setText("Port closed")
+            self.reset_ui_state()
         else:
-            serial.write("PS1;".encode())
-    else:
-        show_warning_messagebox()
+            self.serial.setPortName(self.comL.currentText())
+            if self.serial.open(QIODevice.ReadWrite):
+                self.openB.setText("CLOSE")
+                self.labelCOM.setText("Port opened")
+                self.send_all_commands()
+            else:
+                self.show_warning("Failed to open port!")
 
+    def reset_ui_state(self):
+        """Сброс состояния UI при закрытии порта"""
+        self.count = 0
+        self.grey_all_power_buttons()
+        for btn in [self.powerB, self.rxantB, self.attB, self.onlineL]:
+            btn.setStyleSheet(self.grey_button_style)
 
-def on_10w():
-    if serial.isOpen():
-        serial.write("PC010;".encode())
-    else:
-        show_warning_messagebox()
+    def on_rxant(self):
+        """Переключение RX антенны"""
+        if self.send_command("AN90" + ("9" if not self.is_rx_on else "0")):
+            self.is_rx_on = not self.is_rx_on
 
+    def on_att(self):
+        """Переключение аттенюатора"""
+        if self.send_command("RA0" + ("1" if not self.is_att_on else "0")):
+            self.is_att_on = not self.is_att_on
 
-def on_15w():
-    if serial.isOpen():
-        serial.write("PC015;".encode())
-    else:
-        show_warning_messagebox()
+    def on_power(self):
+        """Включение/выключение питания"""
+        if self.send_command("PS" + ("1" if not self.is_power_on else "0")):
+            self.is_power_on = not self.is_power_on
 
+    def set_power(self, power):
+        """Установка мощности"""
+        self.send_command(f"PC{power}")
 
-def on_20w():
-    if serial.isOpen():
-        serial.write("PC020;".encode())
-    else:
-        show_warning_messagebox()
+    def adjust_frequency(self, step, direction):
+        """Изменение частоты с заданным шагом"""
+        if not self.current_freq:
+            self.show_warning("No data from TRX!")
+            return
+            
+        try:
+            pos = 4 if step == 1000 else 5  # Позиция изменяемой цифры
+            value = int(self.current_freq[pos]) + direction
+            if value < 0 or value > 9:
+                return
+                
+            new_freq = self.current_freq[:pos] + str(value) + self.current_freq[pos+1:]
+            prefix = "FA" if self.is_active_vfoa else "FB"
+            self.send_command(f"{prefix}000{new_freq}")
+        except Exception as e:
+            print(f"Frequency adjustment error: {e}")
+            self.show_warning("Frequency adjustment error!")
 
+    def tuning(self):
+        """Запуск настройки антенны"""
+        self.send_command("AC111")
 
-def on_25w():
-    if serial.isOpen():
-        serial.write("PC025;".encode())
-    else:
-        show_warning_messagebox()
+    def tuner_on(self):
+        """Включение/выключение тюнера"""
+        if self.send_command("AC" + ("110" if not self.is_tuner_on else "000")):
+            self.is_tuner_on = not self.is_tuner_on
 
-
-def on_30w():
-    if serial.isOpen():
-        serial.write("PC030;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_35w():
-    if serial.isOpen():
-        serial.write("PC035;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_40w():
-    if serial.isOpen():
-        serial.write("PC040;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_45w():
-    if serial.isOpen():
-        serial.write("PC045;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_50w():
-    if serial.isOpen():
-        serial.write("PC050;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_55w():
-    if serial.isOpen():
-        serial.write("PC055;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_60w():
-    if serial.isOpen():
-        serial.write("PC060;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_65w():
-    if serial.isOpen():
-        serial.write("PC065;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def on_100w():
-    if serial.isOpen():
-        serial.write("PC100;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def up_1khz():
-    global current_freq, is_active_vfob, is_active_vfoa
-    try:
-        a = int(current_freq[4])
-        a = a + 1
-    except:
-        show_warning_messagebox_no_data()
-    if serial.isOpen():
-        if is_active_vfoa:
-            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
-            print(message)
-            serial.write(message.encode())  
-        if is_active_vfob:
-            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
-            print(message)
-            serial.write(message.encode())
-    else:
-        show_warning_messagebox()
-
-
-def down_1khz():
-    global current_freq, is_active_vfob, is_active_vfoa
-    try:
-        a = int(current_freq[4])
-        a = a - 1
-    except:
-        show_warning_messagebox_no_data()
-    if serial.isOpen():
-        if is_active_vfoa:
-            message = "FA000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
-            print(message)
-            serial.write(message.encode())  
-        if is_active_vfob:
-            message = "FB000"+current_freq[0:4] + str(a) + current_freq[5:8] + ";"
-            print(message)
-            serial.write(message.encode())
-    else:
-        show_warning_messagebox()
-
-
-def up_100hz():
-    global current_freq, is_active_vfob, is_active_vfoa
-    try:
-        a = int(current_freq[5])
-        a = a + 1
-    except:
-        show_warning_messagebox_no_data()
-    if serial.isOpen():
-        if is_active_vfoa:
-            message = "FA000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
-            print(message)
-            serial.write(message.encode())  
-        if is_active_vfob:
-            message = "FB000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
-            print(message)
-            serial.write(message.encode())
-    else:
-        show_warning_messagebox()
-
-
-def down_100hz():
-    global current_freq, is_active_vfob, is_active_vfoa
-    try:
-        a = int(current_freq[5])
-        a = a - 1
-    except:
-        show_warning_messagebox_no_data()
-    if serial.isOpen():
-        if is_active_vfoa:
-            message = "FA000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
-            print(message)
-            serial.write(message.encode())  
-        if is_active_vfob:
-            message = "FB000"+current_freq[0:5] + str(a) + current_freq[6:8] + ";"
-            print(message)
-            serial.write(message.encode())
-    else:
-        show_warning_messagebox()
-
-
-def tuning():
-    if serial.isOpen():
-        serial.write("AC111;".encode())
-    else:
-        show_warning_messagebox()
-
-
-def tuner_on():
-    global is_tuner_on
-    if serial.isOpen():
-        if is_tuner_on:
-            serial.write("AC000;".encode())
+    def on_tx_button(self):
+        """Переключение режима передачи"""
+        if self.ptt_active:
+            self.ptt_off()
+            self.ptt_active = False
         else:
-            serial.write("AC110;".encode())
-    else:
-        show_warning_messagebox()
+            self.ptt_on()
+            self.ptt_active = True
 
+    def ptt_on(self):
+        """Включение передачи"""
+        if self.send_command("TX"):
+            self.tx_onB.setStyleSheet(self.red_button_style)
+            print("Передача включена")
 
-serial.readyRead.connect(on_read)
-ui.openB.clicked.connect(on_open)
-ui.rxantB.clicked.connect(on_rxant)
-ui.attB.clicked.connect(on_att)
-ui.powerB.clicked.connect(on_power)
-ui.powerB_3.clicked.connect(on_10w)
-ui.powerB_4.clicked.connect(on_15w)
-ui.powerB_5.clicked.connect(on_20w)
-ui.powerB_6.clicked.connect(on_25w)
-ui.powerB_7.clicked.connect(on_30w)
-ui.powerB_8.clicked.connect(on_35w)
-ui.powerB_9.clicked.connect(on_40w)
-ui.powerB_10.clicked.connect(on_45w)
-ui.powerB_11.clicked.connect(on_50w)
-ui.powerB_12.clicked.connect(on_55w)
-ui.powerB_13.clicked.connect(on_60w)
-ui.powerB_14.clicked.connect(on_65w)
-ui.powerB_15.clicked.connect(on_100w)
-ui.up1B.clicked.connect(up_1khz)
-ui.down1B.clicked.connect(down_1khz)
-ui.up100B.clicked.connect(up_100hz)
-ui.down100B.clicked.connect(down_100hz)
-ui.tuningB.clicked.connect(tuning)
-ui.tuner_onB.clicked.connect(tuner_on)
+    def ptt_off(self):
+        """Выключение передачи"""
+        if self.send_command("RX"):
+            self.tx_onB.setStyleSheet(self.grey_button_style)
+            print("Передача выключена")
 
-
-
-ui.show()
-app.exec()
+if __name__ == "__main__":
+    app = QtWidgets.QApplication([])
+    window = KenwoodControl()
+    window.show()
+    app.exec()
