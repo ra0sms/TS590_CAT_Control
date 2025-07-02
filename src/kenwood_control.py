@@ -148,7 +148,32 @@ class KenwoodControl(QtWidgets.QMainWindow):
             if power in ["010", "015", "020", "025", "030", "035", 
                         "040", "045", "050", "055", "060", "065", "100"]:
                 self.grey_all_power_buttons()
-                getattr(self, f"powerB_{int(power)//5 - 1}").setStyleSheet(self.red_button_style)
+                if power == "010":
+                    getattr(self, "powerB_3").setStyleSheet(self.red_button_style)
+                if power == "015":
+                    getattr(self, "powerB_4").setStyleSheet(self.red_button_style)
+                if power == "020":
+                    getattr(self, "powerB_5").setStyleSheet(self.red_button_style)
+                if power == "025":
+                    getattr(self, "powerB_6").setStyleSheet(self.red_button_style)
+                if power == "030":
+                    getattr(self, "powerB_7").setStyleSheet(self.red_button_style)
+                if power == "035":
+                    getattr(self, "powerB_8").setStyleSheet(self.red_button_style)
+                if power == "040":
+                    getattr(self, "powerB_9").setStyleSheet(self.red_button_style)
+                if power == "045":
+                    getattr(self, "powerB_10").setStyleSheet(self.red_button_style)
+                if power == "050":
+                    getattr(self, "powerB_11").setStyleSheet(self.red_button_style)
+                if power == "055":
+                    getattr(self, "powerB_12").setStyleSheet(self.red_button_style)
+                if power == "060":
+                    getattr(self, "powerB_13").setStyleSheet(self.red_button_style)
+                if power == "065":
+                    getattr(self, "powerB_14").setStyleSheet(self.red_button_style)
+                if power == "100":
+                    getattr(self, "powerB_15").setStyleSheet(self.red_button_style)
                 
         elif cmd == "AN":
             self.is_rx_on = self.trx_data[3] == "1"
