@@ -142,6 +142,11 @@ class KenwoodControl(QtWidgets.QMainWindow):
         if cmd == "IF":
             self.current_freq = self.trx_data[5:16]
             self.lcdNumber.display(self.current_freq)
+            self.is_tx_on = int(self.trx_data[28])
+            if self.is_tx_on:
+                self.tx_onB.setStyleSheet(self.red_button_style)
+            else:
+                self.tx_onB.setStyleSheet(self.grey_button_style)
             
         elif cmd == "PC":
             power = self.trx_data[2:5]
@@ -228,7 +233,7 @@ class KenwoodControl(QtWidgets.QMainWindow):
         """Сброс состояния UI при закрытии порта"""
         self.count = 0
         self.grey_all_power_buttons()
-        for btn in [self.powerB, self.rxantB, self.attB, self.onlineL]:
+        for btn in [self.powerB, self.rxantB, self.attB, self.onlineL, self.tuner_onB]:
             btn.setStyleSheet(self.grey_button_style)
 
     def on_rxant(self):
@@ -251,23 +256,24 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.send_command(f"PC{power}")
 
     def adjust_frequency(self, step, direction):
-        """Изменение частоты с заданным шагом"""
-        if not self.current_freq:
-            self.show_warning("No data from TRX!")
-            return
-            
+        if not self.current_freq or len(self.current_freq) != 11:
+            self.show_warning("No valid frequency data from TRX!")
+            return       
         try:
-            pos = 4 if step == 1000 else 5  # Позиция изменяемой цифры
-            value = int(self.current_freq[pos]) + direction
-            if value < 0 or value > 9:
+            freq_hz = int(self.current_freq)
+            freq_hz += direction * step
+            if freq_hz < 0 or freq_hz > 99999999999:
+                self.show_warning("Frequency out of range!")
                 return
-                
-            new_freq = self.current_freq[:pos] + str(value) + self.current_freq[pos+1:]
+            new_freq = f"{freq_hz:011d}"
             prefix = "FA" if self.is_active_vfoa else "FB"
-            self.send_command(f"{prefix}000{new_freq}")
+            self.send_command(f"{prefix}{new_freq}")
+            print(f"{prefix}{new_freq}")
+        
         except Exception as e:
             print(f"Frequency adjustment error: {e}")
             self.show_warning("Frequency adjustment error!")
+
 
     def tuning(self):
         """Запуск настройки антенны"""
@@ -289,13 +295,13 @@ class KenwoodControl(QtWidgets.QMainWindow):
 
     def ptt_on(self):
         """Включение передачи"""
-        if self.send_command("TX"):
+        if self.send_command("TX") or self.is_tx_on:
             self.tx_onB.setStyleSheet(self.red_button_style)
             print("Передача включена")
 
     def ptt_off(self):
         """Выключение передачи"""
-        if self.send_command("RX"):
+        if self.send_command("RX") or not self.is_tx_on:
             self.tx_onB.setStyleSheet(self.grey_button_style)
             print("Передача выключена")
 
