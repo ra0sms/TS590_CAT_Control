@@ -13,7 +13,8 @@ Based on Python 3 and PyQt5. If you want, you can change the source code for you
 - Frequency, VFO and mode display; tuning with buttons or the mouse wheel over the frequency
   (100 Hz step, Ctrl + wheel - 1 kHz)
 - Drive power buttons (steps are configurable) and actual TX power display
-- ALC and SWR meters during transmit
+- RF power and SWR meters during transmit
+- AF gain, RF gain and microphone gain sliders, synchronized with the TRX knobs
 - Mode buttons LSB / USB / CW / FM and DATA mode on/off (DATA works in LSB, USB, FM, AM)
 - RX antenna, attenuator, antenna tuner, power on/off
 - PTT: the TX button or hold SPACE. TX is released when the window loses focus,

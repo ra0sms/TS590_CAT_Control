@@ -9,8 +9,10 @@ from PyQt5.QtCore import QIODevice, QTimer, Qt, QEvent, QSettings, QSize
 from PyQt5.QtWidgets import QMessageBox
 
 # Опрос на приёме - всё состояние, на передаче - частота/TX и измерители
-POLL_COMMANDS_RX = ["IF", "PC", "AN", "RA", "PS", "FR", "AC", "DA"]
-POLL_COMMANDS_TX = ["IF", "RM"]
+# IF повторяется через каждые две команды, чтобы частота обновлялась быстро
+POLL_COMMANDS_RX = ["IF", "PC", "AN", "IF", "RA", "PS", "IF", "FR", "AC",
+                    "IF", "DA", "AG0", "IF", "RG", "MG"]
+POLL_COMMANDS_TX = ["IF", "SM0", "RM"]
 POLL_INTERVAL_MS = 50
 # Состояние связи: ответ старше LINK_SLOW_S - "SLOW", старше LINK_LOST_S - "NO ANSWER"
 LINK_CHECK_MS = 200
@@ -19,9 +21,13 @@ LINK_LOST_S = 1.5
 # После перестройки из программы частота из IF какое-то время игнорируется,
 # чтобы старый ответ не откатил её назад
 FREQ_HOLD_S = 0.3
+# То же для ползунков AF/RF/MIC; изменения ползунка отправляются не чаще LEVEL_SEND_MS
+LEVEL_HOLD_S = 0.5
+LEVEL_SEND_MS = 60
 
 # Минимальная длина ответа (без ';') для каждой команды
-MIN_ANSWER_LEN = {"IF": 30, "PC": 5, "AN": 5, "RA": 4, "PS": 3, "FR": 3, "AC": 5, "RM": 7, "DA": 3}
+MIN_ANSWER_LEN = {"IF": 30, "PC": 5, "AN": 5, "RA": 4, "PS": 3, "FR": 3, "AC": 5, "RM": 7, "DA": 3,
+                  "SM": 7, "AG": 6, "RG": 5, "MG": 5}
 
 MODES = {"1": "LSB", "2": "USB", "3": "CW", "4": "FM", "5": "AM",
          "6": "FSK", "7": "CW-R", "9": "FSK-R"}
@@ -29,6 +35,8 @@ VFOS = {"0": "VFO A", "1": "VFO B", "2": "MEM"}
 # Кнопки режимов (код команды MD) и режимы, в которых доступен DATA (LSB, USB, FM, AM)
 MODE_BUTTONS = {"1": "LSB", "2": "USB", "3": "CW", "4": "FM"}
 DATA_MODES = "1245"
+# Регуляторы: ответ -> (надпись, команда установки, позиция значения в ответе, максимум)
+LEVELS = {"AG": ("AF", "AG0", 3, 255), "RG": ("RF", "RG", 2, 255), "MG": ("MIC", "MG", 2, 100)}
 
 # Файл настроек лежит рядом с программой (или с exe)
 if getattr(sys, "frozen", False):
@@ -102,6 +110,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.count = 0
         self.current_freq = ""
         self.freq_hold_until = 0
+        self.level_hold_until = {}
+        self.pending_levels = {}
         self.last_answer_time = 0
         self.got_answer = False
         self.heartbeat = False
@@ -119,6 +129,12 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.timer = QTimer(self)
         self.timer.setInterval(POLL_INTERVAL_MS)
         self.timer.timeout.connect(self.send_all_commands)
+
+        # Отправка значений ползунков пачкой, а не на каждый шаг
+        self.level_timer = QTimer(self)
+        self.level_timer.setSingleShot(True)
+        self.level_timer.setInterval(LEVEL_SEND_MS)
+        self.level_timer.timeout.connect(self.send_levels)
 
         # Проверка связи с трансивером
         self.link_timer = QTimer(self)
@@ -213,19 +229,36 @@ class KenwoodControl(QtWidgets.QMainWindow):
 
         # Измерители и текущая мощность
         meters = QtWidgets.QHBoxLayout()
-        self.alcP = QtWidgets.QProgressBar()
+        self.pwrP = QtWidgets.QProgressBar()
         self.swrP = QtWidgets.QProgressBar()
-        for name, bar in (("ALC", self.alcP), ("SWR", self.swrP)):
+        for name, bar, tooltip in (("PWR", self.pwrP, "RF power meter (TX only)"),
+                                   ("SWR", self.swrP, "SWR meter (TX only)")):
             bar.setRange(0, 30)
             bar.setTextVisible(False)
             bar.setFixedHeight(10)
-            bar.setToolTip(f"{name} meter (TX only)")
+            bar.setToolTip(tooltip)
             meters.addWidget(label(name))
             meters.addWidget(bar, 1)
         self.driveL = label("", 12)
         self.driveL.setToolTip("Current TX power (PC)")
         meters.addWidget(self.driveL)
         main.addLayout(meters)
+
+        # Регуляторы AF, RF и усиления микрофона
+        levels = QtWidgets.QHBoxLayout()
+        self.level_sliders = {}
+        self.level_labels = {}
+        for cmd, (name, _, _, maximum) in LEVELS.items():
+            slider = QtWidgets.QSlider(Qt.Horizontal)
+            slider.setRange(0, maximum)
+            value = label("0")
+            value.setMinimumWidth(value.fontMetrics().horizontalAdvance("255"))
+            levels.addWidget(label(name))
+            levels.addWidget(slider, 1)
+            levels.addWidget(value)
+            self.level_sliders[cmd] = slider
+            self.level_labels[cmd] = value
+        main.addLayout(levels)
 
         # Кнопки управления и выбор порта
         grid = QtWidgets.QGridLayout()
@@ -308,6 +341,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.tx_onB.clicked.connect(self.on_tx_button)
         self.on_topC.toggled.connect(self.on_top)
         self.dataB.clicked.connect(self.on_data)
+        for cmd, slider in self.level_sliders.items():
+            slider.valueChanged.connect(lambda value, c=cmd: self.on_level(c, value))
         for code, btn in self.mode_buttons.items():
             btn.clicked.connect(lambda _, c=code: self.set_mode(c))
 
@@ -356,9 +391,21 @@ class KenwoodControl(QtWidgets.QMainWindow):
             dot = "●" if self.heartbeat else "○"
             self.set_link("ok", f"{dot} ONLINE", f"Last answer {age * 1000:.0f} ms ago")
 
-    def set_meters(self, alc=0, swr=0):
-        self.alcP.setValue(alc)
+    def set_meters(self, pwr=0, swr=0):
+        self.pwrP.setValue(pwr)
         self.swrP.setValue(swr)
+
+    def set_level(self, cmd, value):
+        """Положение ползунка по данным трансивера (без отправки команды обратно)"""
+        slider = self.level_sliders[cmd]
+        slider.blockSignals(True)
+        slider.setValue(value)
+        slider.blockSignals(False)
+        self.level_labels[cmd].setText(str(value))
+
+    def set_levels_enabled(self, enabled):
+        for slider in self.level_sliders.values():
+            slider.setEnabled(enabled)
 
     def refresh_ports(self):
         """Обновление списка COM-портов с сохранением выбранного"""
@@ -472,13 +519,23 @@ class KenwoodControl(QtWidgets.QMainWindow):
             if power.isdigit():
                 self.driveL.setText(f"{int(power):3d} W")
 
+        elif cmd == "SM":
+            value = data[3:7]
+            if value.isdigit() and self.is_tx_on:
+                self.pwrP.setValue(int(value))
+
         elif cmd == "RM":
             value = data[3:7]
-            if value.isdigit():
-                if data[2] == "1":
-                    self.swrP.setValue(int(value))
-                elif data[2] == "3":
-                    self.alcP.setValue(int(value))
+            if value.isdigit() and data[2] == "1":
+                self.swrP.setValue(int(value))
+
+        elif cmd in LEVELS:
+            offset = LEVELS[cmd][2]
+            value = data[offset:offset + 3]
+            # Пока ползунок двигают, ответы трансивера его не трогают
+            if (value.isdigit() and not self.level_sliders[cmd].isSliderDown()
+                    and time.monotonic() > self.level_hold_until.get(cmd, 0)):
+                self.set_level(cmd, int(value))
 
         elif cmd == "AN":
             self.is_rx_on = data[3] == "1"
@@ -533,6 +590,7 @@ class KenwoodControl(QtWidgets.QMainWindow):
             self.serial.setPortName(port)
             if self.serial.open(QIODevice.ReadWrite):
                 self.openB.setText("CLOSE")
+                self.set_levels_enabled(True)
                 self.labelCOM.setText(f"{port} · {self.baud}")
                 self.settings.setValue("serial/port", port)
                 self.rx_buffer = ""
@@ -563,6 +621,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.link_timer.stop()
         self.set_link("closed", "● OFFLINE", "Port closed")
         self.set_meters()
+        self.set_levels_enabled(False)
+        self.pending_levels.clear()
         self.labelCOM.setText("Port closed")
         self.driveL.setText("  - W")
         self.vfoL.setText("")
@@ -622,6 +682,21 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.dataB.setEnabled(data_available or not self.mode)
         self.set_state(self.dataB, self.is_data_on)
         self.modeL.setText(MODES.get(self.mode, "") + ("-D" if self.is_data_on else ""))
+
+    def on_level(self, cmd, value):
+        """Ползунок AF/RF/MIC сдвинут пользователем"""
+        self.level_labels[cmd].setText(str(value))
+        self.level_hold_until[cmd] = time.monotonic() + LEVEL_HOLD_S
+        self.pending_levels[cmd] = value
+        if not self.level_timer.isActive():
+            self.level_timer.start()
+
+    def send_levels(self):
+        """Отправка последних значений ползунков"""
+        for cmd, value in self.pending_levels.items():
+            if self.serial.isOpen():
+                self.serial.write(f"{LEVELS[cmd][1]}{value:03d};".encode())
+        self.pending_levels.clear()
 
     def set_mode(self, code):
         """Выбор режима модуляции"""
