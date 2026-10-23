@@ -45,7 +45,7 @@ else:
     APP_DIR = Path(__file__).resolve().parent
 SETTINGS_FILE = str(APP_DIR / "kenwood_control.ini")
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 
 DEFAULT_SETTINGS = {
     "power/steps": [str(w) for w in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100)],
