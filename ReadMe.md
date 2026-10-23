@@ -14,6 +14,7 @@ Based on Python 3 and PyQt5. If you want, you can change the source code for you
   (100 Hz step, Ctrl + wheel - 1 kHz)
 - Drive power buttons (steps are configurable) and actual TX power display
 - ALC and SWR meters during transmit
+- Mode buttons LSB / USB / CW / FM and DATA mode on/off (DATA works in LSB, USB, FM, AM)
 - RX antenna, attenuator, antenna tuner, power on/off
 - PTT: the TX button or hold SPACE. TX is released when the window loses focus,
   the port is closed or the program exits
@@ -34,7 +35,7 @@ On the first start the program creates `kenwood_control.ini` next to the exe:
 
 ```ini
 [power]
-steps=10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100
+steps=5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100
 
 [serial]
 port=COM6

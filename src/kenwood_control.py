@@ -9,7 +9,7 @@ from PyQt5.QtCore import QIODevice, QTimer, Qt, QEvent, QSettings, QSize
 from PyQt5.QtWidgets import QMessageBox
 
 # Опрос на приёме - всё состояние, на передаче - частота/TX и измерители
-POLL_COMMANDS_RX = ["IF", "PC", "AN", "RA", "PS", "FR", "AC"]
+POLL_COMMANDS_RX = ["IF", "PC", "AN", "RA", "PS", "FR", "AC", "DA"]
 POLL_COMMANDS_TX = ["IF", "RM"]
 POLL_INTERVAL_MS = 50
 # Состояние связи: ответ старше LINK_SLOW_S - "SLOW", старше LINK_LOST_S - "NO ANSWER"
@@ -21,11 +21,14 @@ LINK_LOST_S = 1.5
 FREQ_HOLD_S = 0.3
 
 # Минимальная длина ответа (без ';') для каждой команды
-MIN_ANSWER_LEN = {"IF": 30, "PC": 5, "AN": 5, "RA": 4, "PS": 3, "FR": 3, "AC": 5, "RM": 7}
+MIN_ANSWER_LEN = {"IF": 30, "PC": 5, "AN": 5, "RA": 4, "PS": 3, "FR": 3, "AC": 5, "RM": 7, "DA": 3}
 
 MODES = {"1": "LSB", "2": "USB", "3": "CW", "4": "FM", "5": "AM",
          "6": "FSK", "7": "CW-R", "9": "FSK-R"}
 VFOS = {"0": "VFO A", "1": "VFO B", "2": "MEM"}
+# Кнопки режимов (код команды MD) и режимы, в которых доступен DATA (LSB, USB, FM, AM)
+MODE_BUTTONS = {"1": "LSB", "2": "USB", "3": "CW", "4": "FM"}
+DATA_MODES = "1245"
 
 # Файл настроек лежит рядом с программой (или с exe)
 if getattr(sys, "frozen", False):
@@ -37,7 +40,7 @@ SETTINGS_FILE = str(APP_DIR / "kenwood_control.ini")
 VERSION = "1.1.0"
 
 DEFAULT_SETTINGS = {
-    "power/steps": [str(w) for w in (10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100)],
+    "power/steps": [str(w) for w in (5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100)],
     "serial/port": "",
     "serial/baud": 9600,
     "serial/flow_control": True,    # false, если используется RS232 без RTS/CTS
@@ -94,6 +97,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.is_active_vfob = False
         self.is_tuner_on = False
         self.is_tx_on = False
+        self.is_data_on = False
+        self.mode = ""
         self.count = 0
         self.current_freq = ""
         self.freq_hold_until = 0
@@ -250,6 +255,18 @@ class KenwoodControl(QtWidgets.QMainWindow):
         grid.addWidget(self.openB, 1, 4)
         main.addLayout(grid)
 
+        # Режимы модуляции и DATA
+        modes = QtWidgets.QHBoxLayout()
+        modes.setSpacing(4)
+        self.mode_buttons = {}
+        for code, name in MODE_BUTTONS.items():
+            self.mode_buttons[code] = button(name)
+            modes.addWidget(self.mode_buttons[code])
+        self.dataB = button("DATA")
+        self.dataB.setToolTip("DATA mode (LSB, USB, FM, AM)")
+        modes.addWidget(self.dataB)
+        main.addLayout(modes)
+
         # Кнопки мощности (ступени задаются в kenwood_control.ini)
         power_grid = QtWidgets.QGridLayout()
         power_grid.setSpacing(4)
@@ -290,6 +307,9 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.tuner_onB.clicked.connect(self.tuner_on)
         self.tx_onB.clicked.connect(self.on_tx_button)
         self.on_topC.toggled.connect(self.on_top)
+        self.dataB.clicked.connect(self.on_data)
+        for code, btn in self.mode_buttons.items():
+            btn.clicked.connect(lambda _, c=code: self.set_mode(c))
 
         # Кнопки управления мощностью
         for power, btn in self.power_buttons.items():
@@ -412,8 +432,12 @@ class KenwoodControl(QtWidgets.QMainWindow):
             return
 
         commands = POLL_COMMANDS_TX if self.is_tx_on else POLL_COMMANDS_RX
-        self.send_command(commands[self.count % len(commands)])
+        command = commands[self.count % len(commands)]
         self.count += 1
+        # В CW и FSK команда DA возвращает ошибку
+        if command == "DA" and self.mode not in DATA_MODES:
+            return
+        self.send_command(command)
 
     def parse_trx_data(self, data):
         """Анализ одного ответа трансивера (без ';')"""
@@ -431,7 +455,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
             if freq.isdigit() and time.monotonic() > self.freq_hold_until:
                 self.current_freq = freq
                 self.lcdNumber.display(format_freq(freq))
-            self.modeL.setText(MODES.get(data[29], ""))
+            self.mode = data[29]
+            self.update_mode_ui()
             was_tx = self.is_tx_on
             self.is_tx_on = data[28] == "1"
             self.tx_onB.setStyleSheet(TX_STYLE if self.is_tx_on else OFF_STYLE)
@@ -471,6 +496,10 @@ class KenwoodControl(QtWidgets.QMainWindow):
             self.is_active_vfoa = data[2] == "0"
             self.is_active_vfob = data[2] == "1"
             self.vfoL.setText(VFOS.get(data[2], ""))
+
+        elif cmd == "DA":
+            self.is_data_on = data[2] == "1"
+            self.update_mode_ui()
 
         elif cmd == "AC":
             self.is_tuner_on = data[3] == "1"
@@ -537,7 +566,9 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.labelCOM.setText("Port closed")
         self.driveL.setText("  - W")
         self.vfoL.setText("")
-        self.modeL.setText("")
+        self.mode = ""
+        self.is_data_on = False
+        self.update_mode_ui()
         self.grey_all_power_buttons()
         for btn in [self.powerB, self.rxantB, self.attB, self.tuner_onB, self.tx_onB]:
             btn.setStyleSheet(OFF_STYLE)
@@ -580,6 +611,29 @@ class KenwoodControl(QtWidgets.QMainWindow):
             self.freq_hold_until = time.monotonic() + FREQ_HOLD_S
             self.lcdNumber.display(format_freq(new_freq))
             print(f"{prefix}{new_freq}")
+
+    def update_mode_ui(self):
+        """Подсветка режима и DATA, надпись режима рядом с частотой"""
+        data_available = self.mode in DATA_MODES
+        if not data_available:
+            self.is_data_on = False
+        for code, btn in self.mode_buttons.items():
+            self.set_state(btn, code == self.mode)
+        self.dataB.setEnabled(data_available or not self.mode)
+        self.set_state(self.dataB, self.is_data_on)
+        self.modeL.setText(MODES.get(self.mode, "") + ("-D" if self.is_data_on else ""))
+
+    def set_mode(self, code):
+        """Выбор режима модуляции"""
+        if self.send_command(f"MD{code}"):
+            self.mode = code
+            self.update_mode_ui()
+
+    def on_data(self):
+        """Включение/выключение режима DATA"""
+        if self.send_command("DA" + ("1" if not self.is_data_on else "0")):
+            self.is_data_on = not self.is_data_on
+            self.update_mode_ui()
 
     def tuning(self):
         """Запуск настройки антенны"""
