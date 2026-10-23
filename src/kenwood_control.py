@@ -1,19 +1,85 @@
-from PyQt5 import QtWidgets, uic, QtGui
+import sys
+import time
+from base64 import b64decode
+from pathlib import Path
+
+from PyQt5 import QtWidgets, QtGui
 from PyQt5.QtSerialPort import QSerialPort, QSerialPortInfo
-from PyQt5.QtCore import QIODevice, QTimer, Qt
+from PyQt5.QtCore import QIODevice, QTimer, Qt, QEvent, QSettings, QSize
 from PyQt5.QtWidgets import QMessageBox
+
+# Опрос на приёме - всё состояние, на передаче - частота/TX и измерители
+POLL_COMMANDS_RX = ["IF", "PC", "AN", "RA", "PS", "FR", "AC"]
+POLL_COMMANDS_TX = ["IF", "RM"]
+POLL_INTERVAL_MS = 50
+ONLINE_TIMEOUT_MS = 1000
+# После перестройки из программы частота из IF какое-то время игнорируется,
+# чтобы старый ответ не откатил её назад
+FREQ_HOLD_S = 0.3
+
+# Минимальная длина ответа (без ';') для каждой команды
+MIN_ANSWER_LEN = {"IF": 30, "PC": 5, "AN": 5, "RA": 4, "PS": 3, "FR": 3, "AC": 5, "RM": 7}
+
+MODES = {"1": "LSB", "2": "USB", "3": "CW", "4": "FM", "5": "AM",
+         "6": "FSK", "7": "CW-R", "9": "FSK-R"}
+VFOS = {"0": "VFO A", "1": "VFO B", "2": "MEM"}
+
+# Файл настроек лежит рядом с программой (или с exe)
+if getattr(sys, "frozen", False):
+    APP_DIR = Path(sys.executable).resolve().parent
+else:
+    APP_DIR = Path(__file__).resolve().parent
+SETTINGS_FILE = str(APP_DIR / "kenwood_control.ini")
+
+DEFAULT_SETTINGS = {
+    "power/steps": [str(w) for w in (10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100)],
+    "serial/port": "",
+    "serial/baud": 9600,
+    "serial/flow_control": True,    # false, если используется RS232 без RTS/CTS
+    "window/on_top": False,
+}
+
+OFF_STYLE = ""
+ON_STYLE = "background-color: rgb(60, 170, 70); color: white"
+TX_STYLE = "background-color: red; color: white"
+POWER_COLUMNS = 7
+
+
+def mono_font(size):
+    """Моноширинный шрифт: Consolas, а если его нет - любой моноширинный"""
+    font = QtGui.QFont("Consolas", size)
+    font.setStyleHint(QtGui.QFont.TypeWriter)
+    return font
+
+
+class CompactButton(QtWidgets.QPushButton):
+    """Кнопка шириной по надписи (у QPushButton минимум около 80 px)"""
+    def sizeHint(self):
+        width = self.fontMetrics().horizontalAdvance(self.text()) + 14
+        return QSize(width, super().sizeHint().height())
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+
+def format_freq(freq):
+    """'00014175000' -> '14.175.000'"""
+    return f"{int(freq):,}".replace(",", ".")
+
 
 class KenwoodControl(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
-        uic.loadUi("src/form_design.ui", self)
+        self.load_settings()
+        self.build_ui()
         self.setWindowTitle("Kenwood remote control")
-        self.setWindowIcon(QtGui.QIcon("logo.png"))
-        
+        logo = QtGui.QPixmap()
+        logo.loadFromData(b64decode(LOGO_PNG))
+        self.setWindowIcon(QtGui.QIcon(logo))
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, self.on_topC.isChecked())
+
         # Инициализация переменных состояния
-        self.trx_data = ""
-        self.grey_button_style = "background-color: gray window"
-        self.red_button_style = "background-color: red; border-color: black; border: none"
+        self.rx_buffer = ""
         self.is_power_on = False
         self.is_rx_on = False
         self.is_att_on = False
@@ -23,55 +89,202 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.is_tx_on = False
         self.count = 0
         self.current_freq = ""
+        self.freq_hold_until = 0
         self.ptt_active = False
-        
+
         # Настройка последовательного порта
         self.serial = QSerialPort()
-        self.serial.setBaudRate(9600)
+        self.serial.setBaudRate(self.baud)
         self.serial.readyRead.connect(self.on_read)
-        self.serial.setFlowControl(True)     # comment it if you use RS232 port
-        
-        self.timer = QTimer()
-        
+        self.serial.errorOccurred.connect(self.on_serial_error)
+        self.serial.setFlowControl(
+            QSerialPort.HardwareControl if self.flow_control else QSerialPort.NoFlowControl)
+
+        # Циклический опрос трансивера
+        self.timer = QTimer(self)
+        self.timer.setInterval(POLL_INTERVAL_MS)
+        self.timer.timeout.connect(self.send_all_commands)
+
+        # Индикатор связи гаснет, если от трансивера долго нет ответов
+        self.online_timer = QTimer(self)
+        self.online_timer.setSingleShot(True)
+        self.online_timer.setInterval(ONLINE_TIMEOUT_MS)
+        self.online_timer.timeout.connect(lambda: self.set_online(False))
+
         # Заполнение списка COM-портов
-        self.comL.addItems([port.portName() for port in QSerialPortInfo().availablePorts()])
-        
+        self.refresh_ports()
+
         # Подключение сигналов кнопок
         self.connect_buttons()
-        
-        # Инициализация UI
-        self.init_ui_state()
 
-    def init_ui_state(self):
-        """Инициализация начального состояния UI"""
-        self.grey_all_power_buttons()
-        self.onlineL.setStyleSheet(self.grey_button_style)
-        self.tx_onB.setStyleSheet(self.grey_button_style)
-        self.openB.setText("OPEN")
-        self.labelCOM.setText("Port closed")
+        # Инициализация UI
+        self.reset_ui_state()
+
+        # Пробел (PTT) перехватывается на уровне приложения, чтобы он
+        # не нажимал кнопку, на которой стоит фокус
+        QtWidgets.QApplication.instance().installEventFilter(self)
+
+        # Автоподключение к порту, с которым работали в прошлый раз
+        if self.saved_port and self.comL.currentText() == self.saved_port:
+            QTimer.singleShot(0, self.on_open)
+
+    def load_settings(self):
+        """Чтение kenwood_control.ini; недостающие параметры записываются со значениями по умолчанию"""
+        self.settings = QSettings(SETTINGS_FILE, QSettings.IniFormat)
+        for key, value in DEFAULT_SETTINGS.items():
+            if not self.settings.contains(key):
+                self.settings.setValue(key, value)
+
+        steps = self.settings.value("power/steps")
+        if isinstance(steps, str):
+            steps = [steps]
+        watts = set()
+        for step in steps or []:
+            if step.strip().isdigit() and 5 <= int(step) <= 100:
+                watts.add(int(step))
+            else:
+                print(f"Bad power step in settings: {step!r}")
+        watts = sorted(watts)
+        if not watts:
+            print("Bad power/steps in settings, using defaults")
+            watts = [int(w) for w in DEFAULT_SETTINGS["power/steps"]]
+        self.power_steps = watts
+
+        self.saved_port = self.settings.value("serial/port", "", type=str)
+        self.baud = self.settings.value("serial/baud", 9600, type=int)
+        self.flow_control = self.settings.value("serial/flow_control", True, type=bool)
+
+    def build_ui(self):
+        """Создание виджетов окна"""
+        central = QtWidgets.QWidget(self)
+        self.setCentralWidget(central)
+        main = QtWidgets.QVBoxLayout(central)
+        main.setContentsMargins(6, 6, 6, 2)
+        main.setSpacing(4)
+
+        def button(text):
+            btn = CompactButton(text)
+            btn.setFont(mono_font(12))
+            btn.setMinimumHeight(30)
+            return btn
+
+        def label(text, size=10):
+            item = QtWidgets.QLabel(text)
+            item.setFont(mono_font(size))
+            return item
+
+        # Частота, VFO и вид модуляции, кнопка питания
+        top = QtWidgets.QHBoxLayout()
+        self.lcdNumber = QtWidgets.QLCDNumber()
+        self.lcdNumber.setMinimumHeight(44)
+        self.lcdNumber.setAutoFillBackground(True)
+        self.lcdNumber.setStyleSheet("color: rgb(255, 0, 0);")
+        self.lcdNumber.setSmallDecimalPoint(True)
+        self.lcdNumber.setDigitCount(8)
+        self.lcdNumber.setSegmentStyle(QtWidgets.QLCDNumber.Flat)
+        self.lcdNumber.setToolTip("Mouse wheel: 100 Hz step, Ctrl + wheel: 1 kHz step")
+        top.addWidget(self.lcdNumber, 1)
+        info = QtWidgets.QVBoxLayout()
+        self.vfoL = label("")
+        self.modeL = label("")
+        for item, longest in ((self.vfoL, "VFO B"), (self.modeL, "FSK-R")):
+            item.setMinimumWidth(item.fontMetrics().horizontalAdvance(longest))
+        info.addWidget(self.vfoL)
+        info.addWidget(self.modeL)
+        top.addLayout(info)
+        self.powerB = button("POWER")
+        self.powerB.setMinimumHeight(44)
+        top.addWidget(self.powerB)
+        main.addLayout(top)
+
+        # Измерители и текущая мощность
+        meters = QtWidgets.QHBoxLayout()
+        self.alcP = QtWidgets.QProgressBar()
+        self.swrP = QtWidgets.QProgressBar()
+        for name, bar in (("ALC", self.alcP), ("SWR", self.swrP)):
+            bar.setRange(0, 30)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(10)
+            bar.setToolTip(f"{name} meter (TX only)")
+            meters.addWidget(label(name))
+            meters.addWidget(bar, 1)
+        self.driveL = label("", 12)
+        self.driveL.setToolTip("Current TX power (PC)")
+        meters.addWidget(self.driveL)
+        main.addLayout(meters)
+
+        # Кнопки управления и выбор порта
+        grid = QtWidgets.QGridLayout()
+        grid.setSpacing(4)
+        self.rxantB = button("RX ant")
+        self.attB = button("ATT")
+        self.tuningB = button("Tuning")
+        self.tuner_onB = button("AT on")
+        self.up1B = button("+1kHz")
+        self.down1B = button("-1kHz")
+        self.up100B = button("+100Hz")
+        self.down100B = button("-100Hz")
+        for col, (top_btn, bottom_btn) in enumerate([
+                (self.rxantB, self.attB), (self.tuningB, self.tuner_onB),
+                (self.up1B, self.down1B), (self.up100B, self.down100B)]):
+            grid.addWidget(top_btn, 0, col)
+            grid.addWidget(bottom_btn, 1, col)
+        port = QtWidgets.QHBoxLayout()
+        self.comL = QtWidgets.QComboBox()
+        self.refreshB = QtWidgets.QToolButton()
+        self.refreshB.setIcon(self.style().standardIcon(QtWidgets.QStyle.SP_BrowserReload))
+        self.refreshB.setToolTip("Refresh port list")
+        port.addWidget(self.comL, 1)
+        port.addWidget(self.refreshB)
+        grid.addLayout(port, 0, 4)
+        self.openB = button("OPEN")
+        grid.addWidget(self.openB, 1, 4)
+        main.addLayout(grid)
+
+        # Кнопки мощности (ступени задаются в kenwood_control.ini)
+        power_grid = QtWidgets.QGridLayout()
+        power_grid.setSpacing(4)
+        self.power_buttons = {}
+        for i, watts in enumerate(self.power_steps):
+            btn = button(f"{watts}W")
+            power_grid.addWidget(btn, i // POWER_COLUMNS, i % POWER_COLUMNS)
+            self.power_buttons[f"{watts:03d}"] = btn
+        main.addLayout(power_grid)
+
+        self.tx_onB = button("TX (SPACE)")
+        self.tx_onB.setMinimumHeight(34)
+        main.addWidget(self.tx_onB)
+
+        # Строка состояния: связь, порт, "поверх всех окон"
+        status = self.statusBar()
+        status.setSizeGripEnabled(False)
+        self.onlineL = label("● ONLINE")
+        self.labelCOM = label("")
+        self.on_topC = QtWidgets.QCheckBox("On top")
+        self.on_topC.setChecked(self.settings.value("window/on_top", False, type=bool))
+        status.addWidget(self.onlineL)
+        status.addWidget(self.labelCOM, 1)
+        status.addPermanentWidget(self.on_topC)
+
+        self.setFixedSize(self.sizeHint())
 
     def connect_buttons(self):
         """Подключение всех обработчиков кнопок"""
         # Основные кнопки управления
         self.openB.clicked.connect(self.on_open)
+        self.refreshB.clicked.connect(self.refresh_ports)
         self.rxantB.clicked.connect(self.on_rxant)
         self.attB.clicked.connect(self.on_att)
         self.powerB.clicked.connect(self.on_power)
         self.tuningB.clicked.connect(self.tuning)
         self.tuner_onB.clicked.connect(self.tuner_on)
         self.tx_onB.clicked.connect(self.on_tx_button)
-        
+        self.on_topC.toggled.connect(self.on_top)
+
         # Кнопки управления мощностью
-        power_settings = {
-            self.powerB_3: "010", self.powerB_4: "015", self.powerB_5: "020",
-            self.powerB_6: "025", self.powerB_7: "030", self.powerB_8: "035",
-            self.powerB_9: "040", self.powerB_10: "045", self.powerB_11: "050",
-            self.powerB_12: "055", self.powerB_13: "060", self.powerB_14: "065",
-            self.powerB_15: "100"
-        }
-        for btn, power in power_settings.items():
+        for power, btn in self.power_buttons.items():
             btn.clicked.connect(lambda _, p=power: self.set_power(p))
-            
+
         # Кнопки управления частотой
         self.up1B.clicked.connect(lambda: self.adjust_frequency(step=1000, direction=1))
         self.down1B.clicked.connect(lambda: self.adjust_frequency(step=1000, direction=-1))
@@ -80,30 +293,67 @@ class KenwoodControl(QtWidgets.QMainWindow):
 
     def grey_all_power_buttons(self):
         """Сброс стиля всех кнопок мощности"""
-        for btn in [
-            self.powerB_3, self.powerB_4, self.powerB_5, self.powerB_6,
-            self.powerB_7, self.powerB_8, self.powerB_9, self.powerB_10,
-            self.powerB_11, self.powerB_12, self.powerB_13, self.powerB_14,
-            self.powerB_15
-        ]:
-            btn.setStyleSheet(self.grey_button_style)
+        for btn in self.power_buttons.values():
+            btn.setStyleSheet(OFF_STYLE)
 
-    # Обработчики событий клавиатуры
-    def keyPressEvent(self, event):
-        if event.key() == Qt.Key_Space and not self.ptt_active:
-            self.ptt_active = True
-            self.ptt_on()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-            
-    def keyReleaseEvent(self, event):
-        if event.key() == Qt.Key_Space and self.ptt_active:
-            self.ptt_active = False
-            self.ptt_off()
-            event.accept()
-        else:
-            super().keyReleaseEvent(event)
+    def set_state(self, widget, is_on):
+        """Подсветка включённой функции"""
+        widget.setStyleSheet(ON_STYLE if is_on else OFF_STYLE)
+
+    def set_online(self, is_online):
+        self.onlineL.setStyleSheet("color: rgb(60, 170, 70)" if is_online else "color: gray")
+
+    def set_meters(self, alc=0, swr=0):
+        self.alcP.setValue(alc)
+        self.swrP.setValue(swr)
+
+    def refresh_ports(self):
+        """Обновление списка COM-портов с сохранением выбранного"""
+        selected = self.comL.currentText() or self.saved_port
+        self.comL.clear()
+        self.comL.addItems([port.portName() for port in QSerialPortInfo().availablePorts()])
+        index = self.comL.findText(selected)
+        if index >= 0:
+            self.comL.setCurrentIndex(index)
+
+    def on_top(self, checked):
+        """Окно поверх всех окон"""
+        self.settings.setValue("window/on_top", checked)
+        self.setWindowFlag(Qt.WindowStaysOnTopHint, checked)
+        self.show()
+
+    # Обработчики событий клавиатуры, мыши и окна
+    def eventFilter(self, obj, event):
+        if event.type() in (QEvent.KeyPress, QEvent.KeyRelease) and event.key() == Qt.Key_Space:
+            if event.isAutoRepeat():
+                return True
+            if event.type() == QEvent.KeyPress:
+                if self.isActiveWindow() and not self.ptt_active:
+                    self.ptt_active = self.ptt_on()
+                    return True
+            elif self.ptt_active:
+                self.release_ptt()
+                return True
+            if self.isActiveWindow():
+                return True
+        # Перестройка колесом мыши над индикатором частоты
+        if obj is self.lcdNumber and event.type() == QEvent.Wheel:
+            delta = event.angleDelta().y()
+            if delta:
+                step = 1000 if event.modifiers() & Qt.ControlModifier else 100
+                self.adjust_frequency(step=step, direction=1 if delta > 0 else -1)
+            return True
+        return super().eventFilter(obj, event)
+
+    def changeEvent(self, event):
+        # При потере фокуса отпускание пробела не придёт - выключаем передачу
+        if event.type() == QEvent.ActivationChange and not self.isActiveWindow():
+            self.release_ptt()
+        super().changeEvent(event)
+
+    def closeEvent(self, event):
+        self.close_port()
+        super().closeEvent(event)
 
     # Основные функции управления
     def send_command(self, command):
@@ -121,124 +371,139 @@ class KenwoodControl(QtWidgets.QMainWindow):
     def send_all_commands(self):
         """Циклическая отправка команд запроса состояния"""
         if not self.serial.isOpen():
+            self.timer.stop()
             return
-            
-        commands = ["IF", "PC", "AN", "RA", "PS", "FR", "AC"]
-        if self.count < len(commands):
-            self.send_command(commands[self.count])
-            self.count += 1
-        else:
-            self.count = 0
-            
-        self.timer.singleShot(50, self.send_all_commands)
 
-    def parse_trx_data(self):
-        """Анализ данных от трансивера"""
-        if not self.trx_data:
+        commands = POLL_COMMANDS_TX if self.is_tx_on else POLL_COMMANDS_RX
+        self.send_command(commands[self.count % len(commands)])
+        self.count += 1
+
+    def parse_trx_data(self, data):
+        """Анализ одного ответа трансивера (без ';')"""
+        cmd = data[0:2]
+        if len(data) < MIN_ANSWER_LEN.get(cmd, 2):
+            print(f"Unexpected answer: {data!r}")
             return
-            
-        cmd = self.trx_data[0:2]
-        
+
+        self.set_online(True)
+        self.online_timer.start()
+
         if cmd == "IF":
-            self.current_freq = self.trx_data[5:16]
-            self.lcdNumber.display(self.current_freq)
-            self.is_tx_on = int(self.trx_data[28])
-            if self.is_tx_on:
-                self.tx_onB.setStyleSheet(self.red_button_style)
-            else:
-                self.tx_onB.setStyleSheet(self.grey_button_style)
-            
+            freq = data[2:13]
+            if freq.isdigit() and time.monotonic() > self.freq_hold_until:
+                self.current_freq = freq
+                self.lcdNumber.display(format_freq(freq))
+            self.modeL.setText(MODES.get(data[29], ""))
+            was_tx = self.is_tx_on
+            self.is_tx_on = data[28] == "1"
+            self.tx_onB.setStyleSheet(TX_STYLE if self.is_tx_on else OFF_STYLE)
+            if was_tx and not self.is_tx_on:
+                self.set_meters()
+
         elif cmd == "PC":
-            power = self.trx_data[2:5]
-            if power in ["010", "015", "020", "025", "030", "035", 
-                        "040", "045", "050", "055", "060", "065", "100"]:
-                self.grey_all_power_buttons()
-                if power == "010":
-                    getattr(self, "powerB_3").setStyleSheet(self.red_button_style)
-                if power == "015":
-                    getattr(self, "powerB_4").setStyleSheet(self.red_button_style)
-                if power == "020":
-                    getattr(self, "powerB_5").setStyleSheet(self.red_button_style)
-                if power == "025":
-                    getattr(self, "powerB_6").setStyleSheet(self.red_button_style)
-                if power == "030":
-                    getattr(self, "powerB_7").setStyleSheet(self.red_button_style)
-                if power == "035":
-                    getattr(self, "powerB_8").setStyleSheet(self.red_button_style)
-                if power == "040":
-                    getattr(self, "powerB_9").setStyleSheet(self.red_button_style)
-                if power == "045":
-                    getattr(self, "powerB_10").setStyleSheet(self.red_button_style)
-                if power == "050":
-                    getattr(self, "powerB_11").setStyleSheet(self.red_button_style)
-                if power == "055":
-                    getattr(self, "powerB_12").setStyleSheet(self.red_button_style)
-                if power == "060":
-                    getattr(self, "powerB_13").setStyleSheet(self.red_button_style)
-                if power == "065":
-                    getattr(self, "powerB_14").setStyleSheet(self.red_button_style)
-                if power == "100":
-                    getattr(self, "powerB_15").setStyleSheet(self.red_button_style)
-                
+            power = data[2:5]
+            self.grey_all_power_buttons()
+            btn = self.power_buttons.get(power)
+            if btn:
+                btn.setStyleSheet(ON_STYLE)
+            if power.isdigit():
+                self.driveL.setText(f"{int(power):3d} W")
+
+        elif cmd == "RM":
+            value = data[3:7]
+            if value.isdigit():
+                if data[2] == "1":
+                    self.swrP.setValue(int(value))
+                elif data[2] == "3":
+                    self.alcP.setValue(int(value))
+
         elif cmd == "AN":
-            self.is_rx_on = self.trx_data[3] == "1"
-            self.rxantB.setStyleSheet(self.red_button_style if self.is_rx_on else self.grey_button_style)
-            
+            self.is_rx_on = data[3] == "1"
+            self.set_state(self.rxantB, self.is_rx_on)
+
         elif cmd == "RA":
-            self.is_att_on = self.trx_data[3] == "1"
-            self.attB.setStyleSheet(self.red_button_style if self.is_att_on else self.grey_button_style)
-            
+            self.is_att_on = data[3] == "1"
+            self.set_state(self.attB, self.is_att_on)
+
         elif cmd == "PS":
-            self.is_power_on = self.trx_data[2] == "1"
-            self.powerB.setStyleSheet(self.red_button_style if self.is_power_on else self.grey_button_style)
-            
+            self.is_power_on = data[2] == "1"
+            self.set_state(self.powerB, self.is_power_on)
+
         elif cmd == "FR":
-            self.is_active_vfoa = self.trx_data[2] == "0"
-            self.is_active_vfob = self.trx_data[2] == "1"
-            
+            self.is_active_vfoa = data[2] == "0"
+            self.is_active_vfob = data[2] == "1"
+            self.vfoL.setText(VFOS.get(data[2], ""))
+
         elif cmd == "AC":
-            self.is_tuner_on = self.trx_data[3] == "1"
-            self.tuner_onB.setStyleSheet(self.red_button_style if self.is_tuner_on else self.grey_button_style)
-            
-        self.onlineL.setStyleSheet(self.red_button_style if ";" in self.trx_data else self.grey_button_style)
+            self.is_tuner_on = data[3] == "1"
+            self.set_state(self.tuner_onB, self.is_tuner_on)
 
     def on_read(self):
         """Чтение данных из последовательного порта"""
-        rx = self.serial.read(100)
-        self.trx_data += str(rx, 'utf-8')
-        
-        if ';' in self.trx_data:
-            print(self.trx_data)
-            self.parse_trx_data()
-            self.trx_data = ""
+        self.rx_buffer += bytes(self.serial.readAll()).decode("ascii", "ignore")
+
+        # Последний кусок может быть неполным ответом - оставляем его в буфере
+        *answers, self.rx_buffer = self.rx_buffer.split(";")
+        for answer in answers:
+            answer = answer.strip()
+            if answer:
+                print(answer)
+                self.parse_trx_data(answer)
+
+    def on_serial_error(self, error):
+        """Порт пропал (например, отключили USB)"""
+        if error == QSerialPort.ResourceError:
+            self.close_port()
+            self.show_warning("Connection to the port was lost!")
 
     # Обработчики кнопок
     def on_open(self):
         """Открытие/закрытие COM-порта"""
         if self.serial.isOpen():
-            self.serial.close()
-            self.openB.setText("OPEN")
-            self.labelCOM.setText("Port closed")
-            self.reset_ui_state()
+            self.close_port()
         else:
-            self.serial.setPortName(self.comL.currentText())
+            port = self.comL.currentText()
+            self.serial.setPortName(port)
             if self.serial.open(QIODevice.ReadWrite):
                 self.openB.setText("CLOSE")
-                self.labelCOM.setText("Port opened")
-                self.send_all_commands()
+                self.labelCOM.setText(f"{port} · {self.baud}")
+                self.settings.setValue("serial/port", port)
+                self.rx_buffer = ""
+                self.count = 0
+                self.timer.start()
             else:
                 self.show_warning("Failed to open port!")
+
+    def close_port(self):
+        """Закрытие порта с выключением передачи"""
+        self.release_ptt()
+        self.timer.stop()
+        if self.serial.isOpen():
+            self.serial.waitForBytesWritten(200)
+            self.serial.close()
+        self.openB.setText("OPEN")
+        self.reset_ui_state()
 
     def reset_ui_state(self):
         """Сброс состояния UI при закрытии порта"""
         self.count = 0
+        self.current_freq = ""
+        self.is_tx_on = False
+        self.ptt_active = False
+        self.online_timer.stop()
+        self.set_online(False)
+        self.set_meters()
+        self.labelCOM.setText("Port closed")
+        self.driveL.setText("  - W")
+        self.vfoL.setText("")
+        self.modeL.setText("")
         self.grey_all_power_buttons()
-        for btn in [self.powerB, self.rxantB, self.attB, self.onlineL, self.tuner_onB]:
-            btn.setStyleSheet(self.grey_button_style)
+        for btn in [self.powerB, self.rxantB, self.attB, self.tuner_onB, self.tx_onB]:
+            btn.setStyleSheet(OFF_STYLE)
 
     def on_rxant(self):
         """Переключение RX антенны"""
-        if self.send_command("AN90" + ("9" if not self.is_rx_on else "0")):
+        if self.send_command("AN9" + ("1" if not self.is_rx_on else "0") + "9"):
             self.is_rx_on = not self.is_rx_on
 
     def on_att(self):
@@ -256,24 +521,24 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.send_command(f"PC{power}")
 
     def adjust_frequency(self, step, direction):
-        if not self.current_freq or len(self.current_freq) != 11:
+        if len(self.current_freq) != 11:
             self.show_warning("No valid frequency data from TRX!")
-            return       
-        try:
-            freq_hz = int(self.current_freq)
-            freq_hz += direction * step
-            if freq_hz < 0 or freq_hz > 99999999999:
-                self.show_warning("Frequency out of range!")
-                return
-            new_freq = f"{freq_hz:011d}"
-            prefix = "FA" if self.is_active_vfoa else "FB"
-            self.send_command(f"{prefix}{new_freq}")
+            return
+        if not (self.is_active_vfoa or self.is_active_vfob):
+            self.show_warning("Select VFO A or VFO B on TRX!")
+            return
+        freq_hz = int(self.current_freq) + direction * step
+        if freq_hz < 0 or freq_hz > 99999999999:
+            self.show_warning("Frequency out of range!")
+            return
+        new_freq = f"{freq_hz:011d}"
+        prefix = "FA" if self.is_active_vfoa else "FB"
+        if self.send_command(f"{prefix}{new_freq}"):
+            # Не ждём следующего IF, чтобы быстрые нажатия не терялись
+            self.current_freq = new_freq
+            self.freq_hold_until = time.monotonic() + FREQ_HOLD_S
+            self.lcdNumber.display(format_freq(new_freq))
             print(f"{prefix}{new_freq}")
-        
-        except Exception as e:
-            print(f"Frequency adjustment error: {e}")
-            self.show_warning("Frequency adjustment error!")
-
 
     def tuning(self):
         """Запуск настройки антенны"""
@@ -287,26 +552,99 @@ class KenwoodControl(QtWidgets.QMainWindow):
     def on_tx_button(self):
         """Переключение режима передачи"""
         if self.ptt_active:
-            self.ptt_off()
-            self.ptt_active = False
+            self.release_ptt()
         else:
-            self.ptt_on()
-            self.ptt_active = True
+            self.ptt_active = self.ptt_on()
+
+    def release_ptt(self):
+        """Выключение передачи, если она была включена из программы"""
+        if self.ptt_active:
+            self.ptt_active = False
+            self.ptt_off()
 
     def ptt_on(self):
         """Включение передачи"""
-        if self.send_command("TX") or self.is_tx_on:
-            self.tx_onB.setStyleSheet(self.red_button_style)
+        if self.send_command("TX"):
+            self.tx_onB.setStyleSheet(TX_STYLE)
             print("Передача включена")
+            return True
+        return False
 
     def ptt_off(self):
         """Выключение передачи"""
-        if self.send_command("RX") or not self.is_tx_on:
-            self.tx_onB.setStyleSheet(self.grey_button_style)
-            print("Передача выключена")
+        if self.serial.isOpen():
+            self.serial.write(b"RX;")
+        self.tx_onB.setStyleSheet(OFF_STYLE)
+        print("Передача выключена")
+
+# Иконка окна: logo.png, уменьшенный до 64x64
+LOGO_PNG = (
+    "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"
+)
+
 
 if __name__ == "__main__":
-    app = QtWidgets.QApplication([])
+    app = QtWidgets.QApplication(sys.argv)
     window = KenwoodControl()
     window.show()
-    app.exec()
+    sys.exit(app.exec())
