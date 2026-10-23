@@ -12,7 +12,10 @@ from PyQt5.QtWidgets import QMessageBox
 POLL_COMMANDS_RX = ["IF", "PC", "AN", "RA", "PS", "FR", "AC"]
 POLL_COMMANDS_TX = ["IF", "RM"]
 POLL_INTERVAL_MS = 50
-ONLINE_TIMEOUT_MS = 1000
+# Состояние связи: ответ старше LINK_SLOW_S - "SLOW", старше LINK_LOST_S - "NO ANSWER"
+LINK_CHECK_MS = 200
+LINK_SLOW_S = 0.6
+LINK_LOST_S = 1.5
 # После перестройки из программы частота из IF какое-то время игнорируется,
 # чтобы старый ответ не откатил её назад
 FREQ_HOLD_S = 0.3
@@ -31,6 +34,8 @@ else:
     APP_DIR = Path(__file__).resolve().parent
 SETTINGS_FILE = str(APP_DIR / "kenwood_control.ini")
 
+VERSION = "1.1.0"
+
 DEFAULT_SETTINGS = {
     "power/steps": [str(w) for w in (10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 100)],
     "serial/port": "",
@@ -42,6 +47,8 @@ DEFAULT_SETTINGS = {
 OFF_STYLE = ""
 ON_STYLE = "background-color: rgb(60, 170, 70); color: white"
 TX_STYLE = "background-color: red; color: white"
+LINK_COLORS = {"ok": "rgb(60, 170, 70)", "slow": "rgb(230, 140, 0)",
+               "lost": "red", "closed": "gray"}
 POWER_COLUMNS = 7
 
 
@@ -72,7 +79,7 @@ class KenwoodControl(QtWidgets.QMainWindow):
         super().__init__()
         self.load_settings()
         self.build_ui()
-        self.setWindowTitle("Kenwood remote control")
+        self.setWindowTitle(f"Kenwood remote control {VERSION}")
         logo = QtGui.QPixmap()
         logo.loadFromData(b64decode(LOGO_PNG))
         self.setWindowIcon(QtGui.QIcon(logo))
@@ -90,6 +97,9 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.count = 0
         self.current_freq = ""
         self.freq_hold_until = 0
+        self.last_answer_time = 0
+        self.got_answer = False
+        self.heartbeat = False
         self.ptt_active = False
 
         # Настройка последовательного порта
@@ -105,11 +115,10 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.timer.setInterval(POLL_INTERVAL_MS)
         self.timer.timeout.connect(self.send_all_commands)
 
-        # Индикатор связи гаснет, если от трансивера долго нет ответов
-        self.online_timer = QTimer(self)
-        self.online_timer.setSingleShot(True)
-        self.online_timer.setInterval(ONLINE_TIMEOUT_MS)
-        self.online_timer.timeout.connect(lambda: self.set_online(False))
+        # Проверка связи с трансивером
+        self.link_timer = QTimer(self)
+        self.link_timer.setInterval(LINK_CHECK_MS)
+        self.link_timer.timeout.connect(self.update_link_status)
 
         # Заполнение списка COM-портов
         self.refresh_ports()
@@ -258,7 +267,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         # Строка состояния: связь, порт, "поверх всех окон"
         status = self.statusBar()
         status.setSizeGripEnabled(False)
-        self.onlineL = label("● ONLINE")
+        self.onlineL = label("")
+        self.onlineL.setMinimumWidth(self.onlineL.fontMetrics().horizontalAdvance("● NO ANSWER"))
         self.labelCOM = label("")
         self.on_topC = QtWidgets.QCheckBox("On top")
         self.on_topC.setChecked(self.settings.value("window/on_top", False, type=bool))
@@ -300,8 +310,31 @@ class KenwoodControl(QtWidgets.QMainWindow):
         """Подсветка включённой функции"""
         widget.setStyleSheet(ON_STYLE if is_on else OFF_STYLE)
 
-    def set_online(self, is_online):
-        self.onlineL.setStyleSheet("color: rgb(60, 170, 70)" if is_online else "color: gray")
+    def set_link(self, state, text, tooltip=""):
+        self.onlineL.setText(text)
+        self.onlineL.setToolTip(tooltip)
+        self.onlineL.setStyleSheet(f"color: {LINK_COLORS[state]}")
+
+    def update_link_status(self):
+        """Индикатор связи: ответы идут, трансивер не завис, CTS в порядке"""
+        if not self.serial.isOpen():
+            self.set_link("closed", "● OFFLINE", "Port closed")
+            return
+        age = time.monotonic() - self.last_answer_time
+        cts = bool(self.serial.pinoutSignals() & QSerialPort.ClearToSendSignal)
+        if self.flow_control and not cts:
+            self.set_link("lost", "● CTS LOW",
+                          "TRX does not accept commands (CTS is low): check cable and TRX")
+        elif age > LINK_LOST_S:
+            self.set_link("lost", "● NO ANSWER", "No answers from TRX")
+        elif not self.got_answer:
+            self.set_link("slow", "● WAIT", "Waiting for the first answer from TRX")
+        elif age > LINK_SLOW_S:
+            self.set_link("slow", "● SLOW", f"Last answer {age * 1000:.0f} ms ago")
+        else:
+            # Точка мигает с каждым ответом на IF - видно, что трансивер отвечает
+            dot = "●" if self.heartbeat else "○"
+            self.set_link("ok", f"{dot} ONLINE", f"Last answer {age * 1000:.0f} ms ago")
 
     def set_meters(self, alc=0, swr=0):
         self.alcP.setValue(alc)
@@ -374,6 +407,10 @@ class KenwoodControl(QtWidgets.QMainWindow):
             self.timer.stop()
             return
 
+        # Трансивер не забирает данные (CTS снят) - не копим запросы в буфере
+        if self.serial.bytesToWrite() > 0:
+            return
+
         commands = POLL_COMMANDS_TX if self.is_tx_on else POLL_COMMANDS_RX
         self.send_command(commands[self.count % len(commands)])
         self.count += 1
@@ -385,10 +422,11 @@ class KenwoodControl(QtWidgets.QMainWindow):
             print(f"Unexpected answer: {data!r}")
             return
 
-        self.set_online(True)
-        self.online_timer.start()
+        self.last_answer_time = time.monotonic()
+        self.got_answer = True
 
         if cmd == "IF":
+            self.heartbeat = not self.heartbeat
             freq = data[2:13]
             if freq.isdigit() and time.monotonic() > self.freq_hold_until:
                 self.current_freq = freq
@@ -470,7 +508,10 @@ class KenwoodControl(QtWidgets.QMainWindow):
                 self.settings.setValue("serial/port", port)
                 self.rx_buffer = ""
                 self.count = 0
+                self.last_answer_time = time.monotonic()
+                self.got_answer = False
                 self.timer.start()
+                self.link_timer.start()
             else:
                 self.show_warning("Failed to open port!")
 
@@ -490,8 +531,8 @@ class KenwoodControl(QtWidgets.QMainWindow):
         self.current_freq = ""
         self.is_tx_on = False
         self.ptt_active = False
-        self.online_timer.stop()
-        self.set_online(False)
+        self.link_timer.stop()
+        self.set_link("closed", "● OFFLINE", "Port closed")
         self.set_meters()
         self.labelCOM.setText("Port closed")
         self.driveL.setText("  - W")

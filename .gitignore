@@ -1,0 +1,15 @@
+# Сборка
+build/
+dist/
+output/
+releases/src/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+.ropeproject/
+.venv/
+
+# Личные настройки программы
+kenwood_control.ini

@@ -1,0 +1,42 @@
+# Сборка Windows-версии и публикация релиза на GitHub.
+# Релиз: поднять VERSION в src/kenwood_control.py, закоммитить и запушить тег:
+#   git tag v1.1.0 && git push origin v1.1.0
+# Ручной запуск (Actions -> Release -> Run workflow) только собирает exe,
+# его можно скачать в разделе Artifacts запуска.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller==6.22.3
+
+      - name: Build exe
+        run: python build.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/*.exe
+
+      - name: Publish release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.exe --title "$GITHUB_REF_NAME" --generate-notes
